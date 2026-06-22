@@ -72,9 +72,14 @@ export default function DashboardPage({ onOpenPassport }) {
     const weeks = [...new Set((weeksRes.data || []).map(w => w.week_start))]
     setAvailableWeeks(weeks)
 
-    // Уникальные месяцы из недель + текущий
+    // Текущий + 2 вперёд + все прошлые с данными
+    const now = new Date()
+    const futureMonths = [0, 1, 2].map(offset => {
+      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1)
+      return monthKey(d)
+    })
     const months = [...new Set([
-      monthKey(),
+      ...futureMonths,
       ...weeks.map(w => monthKey(new Date(w)))
     ])].sort((a, b) => b.localeCompare(a))
     setAvailableMonths(months)
