@@ -12,10 +12,11 @@ function getISOWeek(date) {
 }
 
 function getWeekStart(date = new Date()) {
+  // Отчётная неделя Опоры: чт–ср
   const d = new Date(date)
   const day = d.getDay()
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1)
-  d.setDate(diff)
+  const diff = day >= 4 ? -(day - 4) : -(day + 3)
+  d.setDate(d.getDate() + diff)
   return d.toISOString().split('T')[0]
 }
 
