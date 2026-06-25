@@ -1,9 +1,9 @@
 export const STATUS_BADGE = {
   'В переговорах':          'badge-negotiation',
-  'Новый / подготовка':     'badge-new',
+  'Новый':                  'badge-new',
   'Тест':                   'badge-test',
   'Активен':                'badge-active',
-  'Активен, под контролем': 'badge-control',
+  'Под контролем':          'badge-control',
   'Снижен объём':           'badge-reduced',
   'Пауза':                  'badge-pause',
   'Неактивен':              'badge-inactive',
