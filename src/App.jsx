@@ -3,12 +3,24 @@ import Sidebar from './components/Sidebar.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import ContractorsPage from './pages/ContractorsPage.jsx'
 import PassportPage from './pages/PassportPage.jsx'
-import WeeklyPage from './pages/WeeklyPage.jsx'
 
 const PAGE_TITLES = {
   dashboard: 'Дашборд',
   contractors: 'Подрядчики',
-  weekly: 'Недельный факт',
+  import: 'Импорт данных',
+}
+
+function ImportPlaceholder() {
+  return (
+    <div className="empty-state" style={{ marginTop: 60 }}>
+      <div className="empty-state-icon">📥</div>
+      <h3>Импорт данных из Битрикса</h3>
+      <p style={{ maxWidth: 400, margin: '8px auto 0' }}>
+        Здесь будет загрузка еженедельного Excel-файла с листами: Лиды, Квалы, Встречи, Сделки.<br /><br />
+        Раздел в разработке.
+      </p>
+    </div>
+  )
 }
 
 export default function App() {
@@ -41,7 +53,7 @@ export default function App() {
           {page === 'dashboard' && <DashboardPage onOpenPassport={openPassport} />}
           {page === 'contractors' && <ContractorsPage onOpenPassport={openPassport} />}
           {page === 'passport' && passportId && <PassportPage contractorId={passportId} onBack={backToList} />}
-          {page === 'weekly' && <WeeklyPage />}
+          {page === 'import' && <ImportPlaceholder />}
         </div>
       </div>
     </div>
