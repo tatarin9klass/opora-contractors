@@ -7,11 +7,21 @@ export default function AddContractorModal({ onClose, onSaved }) {
   const [paymentTypes, setPaymentTypes] = useState([])
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({
-    name: '', short_name: '', type_id: '', status_id: '',
-    responsible_name: '', contact_name: '', contact_telegram: '',
-    contact_phone: '', comment: '',
-    payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '',
-    has_prepayment: false,
+    short_name: '',
+    type_id: '',
+    status_id: '',
+    responsible_name: '',
+    comment: '',
+    spend_by_source: false,
+    // Первый источник
+    source_name: '',
+    source_phone: '',
+    source_landing: '',
+    // Оплата источника
+    payment_type_id: '',
+    cpl_rate: '',
+    retainer: '',
+    ad_budget: '',
   })
 
   useEffect(() => {
@@ -21,43 +31,53 @@ export default function AddContractorModal({ onClose, onSaved }) {
       supabase.from('payment_types').select('*').order('name'),
     ]).then(([t, s, p]) => {
       setTypes(t.data || [])
-      // default status = "Новый / подготовка"
-      const def = (s.data || []).find(x => x.name === 'Новый / подготовка')
       setStatuses(s.data || [])
-      setForm(f => ({ ...f, status_id: def?.id || '' }))
       setPaymentTypes(p.data || [])
+      // Дефолт статус = "Новый"
+      const def = (s.data || []).find(x => x.name === 'Новый')
+      if (def) setForm(f => ({ ...f, status_id: String(def.id) }))
     })
   }, [])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   async function handleSave() {
-    if (!form.name || !form.short_name || !form.type_id || !form.status_id || !form.responsible_name) {
-      alert('Заполните обязательные поля')
+    if (!form.short_name || !form.type_id || !form.status_id || !form.responsible_name) {
+      alert('Заполните обязательные поля: название, тип, статус, ответственный')
+      return
+    }
+    if (!form.source_name) {
+      alert('Добавьте хотя бы один источник (roistat marker)')
       return
     }
     setLoading(true)
+
+    // Создаём подрядчика
     const { data: contractor, error } = await supabase.from('contractors').insert({
-      name: form.name, short_name: form.short_name,
-      type_id: Number(form.type_id), status_id: Number(form.status_id),
+      name: form.short_name, // name = short_name для простоты
+      short_name: form.short_name,
+      type_id: Number(form.type_id),
+      status_id: Number(form.status_id),
       responsible_name: form.responsible_name,
-      contact_name: form.contact_name, contact_telegram: form.contact_telegram,
-      contact_phone: form.contact_phone, comment: form.comment,
+      comment: form.comment,
+      spend_by_source: form.spend_by_source,
     }).select().single()
 
     if (error) { alert('Ошибка: ' + error.message); setLoading(false); return }
 
-    // Save payment model if type selected
-    if (form.payment_type_id) {
-      await supabase.from('payment_models').insert({
-        contractor_id: contractor.id,
-        payment_type_id: Number(form.payment_type_id),
-        cpl_rate: form.cpl_rate ? Number(form.cpl_rate) : null,
-        retainer: form.retainer ? Number(form.retainer) : null,
-        ad_budget: form.ad_budget ? Number(form.ad_budget) : null,
-        has_prepayment: form.has_prepayment,
-      })
-    }
+    // Создаём первый источник
+    await supabase.from('sources').insert({
+      contractor_id: contractor.id,
+      name: form.source_name, // название = маркер
+      roistat_marker: form.source_name,
+      calltracking_phone: form.source_phone || null,
+      landing_url: form.source_landing || null,
+      payment_type_id: form.payment_type_id ? Number(form.payment_type_id) : null,
+      cpl_rate: form.cpl_rate ? Number(form.cpl_rate) : null,
+      retainer: form.retainer ? Number(form.retainer) : null,
+      ad_budget: form.ad_budget ? Number(form.ad_budget) : null,
+      status: 'активен',
+    })
 
     setLoading(false)
     onSaved(contractor)
@@ -71,16 +91,17 @@ export default function AddContractorModal({ onClose, onSaved }) {
           <button className="btn-close" onClick={onClose}>×</button>
         </div>
         <div className="modal-body">
+
           <div className="form-section">
             <div className="form-section-title">Основное</div>
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Название <span className="req">*</span></label>
-                <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Полное название" />
+                <label className="form-label">Название подрядчика <span className="req">*</span></label>
+                <input className="form-input" value={form.short_name} onChange={e => set('short_name', e.target.value)} placeholder="Например: Ригиль" />
               </div>
               <div className="form-group">
-                <label className="form-label">Краткое название <span className="req">*</span></label>
-                <input className="form-input" value={form.short_name} onChange={e => set('short_name', e.target.value)} placeholder="Для таблиц" />
+                <label className="form-label">Ответственный <span className="req">*</span></label>
+                <input className="form-input" value={form.responsible_name} onChange={e => set('responsible_name', e.target.value)} placeholder="Кто ведёт подрядчика" />
               </div>
             </div>
             <div className="form-row">
@@ -100,31 +121,48 @@ export default function AddContractorModal({ onClose, onSaved }) {
               </div>
             </div>
             <div className="form-group">
-              <label className="form-label">Ответственный внутри компании <span className="req">*</span></label>
-              <input className="form-input" value={form.responsible_name} onChange={e => set('responsible_name', e.target.value)} placeholder="Имя сотрудника" />
+              <label className="form-label">Комментарий</label>
+              <textarea className="form-textarea" value={form.comment} onChange={e => set('comment', e.target.value)} placeholder="Краткое описание подрядчика..." rows={2} />
+            </div>
+            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                id="spend_by_source"
+                checked={form.spend_by_source}
+                onChange={e => set('spend_by_source', e.target.checked)}
+              />
+              <label htmlFor="spend_by_source" style={{ fontSize: 13, cursor: 'pointer' }}>
+                Вводить расход суммарно по подрядчику (не по источникам)
+              </label>
             </div>
           </div>
 
           <div className="form-section">
-            <div className="form-section-title">Контакты</div>
+            <div className="form-section-title">Первый источник <span className="req">*</span></div>
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Контакт подрядчика</label>
-                <input className="form-input" value={form.contact_name} onChange={e => set('contact_name', e.target.value)} placeholder="ФИО / ник" />
+                <label className="form-label">Roistat marker <span className="req">*</span></label>
+                <input
+                  className="form-input"
+                  value={form.source_name}
+                  onChange={e => set('source_name', e.target.value)}
+                  placeholder="ofbfl-название"
+                />
+                <div className="form-hint">Это же значение будет именем источника</div>
               </div>
               <div className="form-group">
-                <label className="form-label">Telegram</label>
-                <input className="form-input" value={form.contact_telegram} onChange={e => set('contact_telegram', e.target.value)} placeholder="@username" />
+                <label className="form-label">Телефон КТ</label>
+                <input className="form-input" value={form.source_phone} onChange={e => set('source_phone', e.target.value)} placeholder="+7..." />
               </div>
             </div>
             <div className="form-group">
-              <label className="form-label">Телефон</label>
-              <input className="form-input" value={form.contact_phone} onChange={e => set('contact_phone', e.target.value)} placeholder="+7..." />
+              <label className="form-label">Посадочная страница</label>
+              <input className="form-input" value={form.source_landing} onChange={e => set('source_landing', e.target.value)} placeholder="https://..." />
             </div>
           </div>
 
           <div className="form-section">
-            <div className="form-section-title">Модель оплаты (можно заполнить позже)</div>
+            <div className="form-section-title">Модель оплаты источника</div>
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">Тип оплаты</label>
@@ -134,28 +172,23 @@ export default function AddContractorModal({ onClose, onSaved }) {
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">Ставка CPL (₽)</label>
+                <label className="form-label">Ставка за лид (₽)</label>
                 <input className="form-input" type="number" value={form.cpl_rate} onChange={e => set('cpl_rate', e.target.value)} placeholder="0" />
+                <div className="form-hint">Для модели CPL / фикс за лид</div>
               </div>
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Абонентка (₽)</label>
+                <label className="form-label">Абонентка (₽/мес)</label>
                 <input className="form-input" type="number" value={form.retainer} onChange={e => set('retainer', e.target.value)} placeholder="0" />
               </div>
               <div className="form-group">
-                <label className="form-label">Рекламный бюджет (₽)</label>
+                <label className="form-label">Плановый бюджет (₽/мес)</label>
                 <input className="form-input" type="number" value={form.ad_budget} onChange={e => set('ad_budget', e.target.value)} placeholder="0" />
               </div>
             </div>
           </div>
 
-          <div className="form-section">
-            <div className="form-section-title">Комментарий</div>
-            <div className="form-group">
-              <textarea className="form-textarea" value={form.comment} onChange={e => set('comment', e.target.value)} placeholder="Краткая информация о подрядчике..." rows={3} />
-            </div>
-          </div>
         </div>
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Отмена</button>

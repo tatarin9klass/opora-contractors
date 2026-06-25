@@ -4,7 +4,7 @@ export default function Sidebar({ page, setPage }) {
   const items = [
     { id: 'dashboard', icon: '📊', label: 'Дашборд' },
     { id: 'contractors', icon: '🤝', label: 'Подрядчики' },
-    { id: 'weekly', icon: '📅', label: 'Недельный факт' },
+    { id: 'import', icon: '📥', label: 'Импорт данных' },
   ]
 
   return (
@@ -17,7 +17,7 @@ export default function Sidebar({ page, setPage }) {
         {items.map(item => (
           <div
             key={item.id}
-            className={`nav-item ${page === item.id || (page.startsWith('passport') && item.id === 'contractors') ? 'active' : ''}`}
+            className={`nav-item ${page === item.id || (page === 'passport' && item.id === 'contractors') ? 'active' : ''}`}
             onClick={() => setPage(item.id)}
           >
             <span className="nav-icon">{item.icon}</span>
