@@ -5,52 +5,150 @@ import ChangeStatusModal from '../components/ChangeStatusModal.jsx'
 import AddDecisionModal from '../components/AddDecisionModal.jsx'
 import WeeklyFactModal from '../components/WeeklyFactModal.jsx'
 
-const TABS = ['Обзор', 'Источники', 'Оплата', 'Факт', 'Решения', 'История']
+const TABS = ['Обзор', 'Источники и оплата', 'Расход', 'Факт', 'Решения', 'Счета', 'Файлы', 'История']
+
+const PAYMENT_TYPE_LABELS = {
+  'CPL': 'CPL',
+  'Фикс': 'Фикс',
+  'Абонентка': 'Абонентка',
+  'Абонентка + бюджет': 'Або + бюджет',
+  'Процент': 'Процент',
+  'Смешанная': 'Смешанная',
+}
 
 export default function PassportPage({ contractorId, onBack }) {
   const [tab, setTab] = useState('Обзор')
   const [contractor, setContractor] = useState(null)
   const [mtd, setMtd] = useState(null)
   const [sources, setSources] = useState([])
-  const [payment, setPayment] = useState(null)
+  const [paymentTypes, setPaymentTypes] = useState([])
   const [facts, setFacts] = useState([])
   const [decisions, setDecisions] = useState([])
   const [statusHistory, setStatusHistory] = useState([])
+  const [invoices, setInvoices] = useState([])
+  const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(true)
   const [showStatus, setShowStatus] = useState(false)
   const [showDecision, setShowDecision] = useState(false)
   const [showFact, setShowFact] = useState(false)
+  const [editingSource, setEditingSource] = useState(null)
   const [showAddSource, setShowAddSource] = useState(false)
-  const [newSource, setNewSource] = useState({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '' })
+  const [newSource, setNewSource] = useState({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '' })
+  const [spendForm, setSpendForm] = useState({ week_start: '', source_id: '', spend: '', entered_by: '', comment: '' })
+  const [spendLoading, setSpendLoading] = useState(false)
+  const [editContractor, setEditContractor] = useState(false)
+  const [contractorForm, setContractorForm] = useState({})
 
   async function load() {
     setLoading(true)
-    const [c, m, s, p, f, d, sh] = await Promise.all([
+    const [c, m, s, f, d, sh, inv, fi, pt] = await Promise.all([
       supabase.from('contractors').select('*, contractor_types(name), contractor_statuses(name, is_active)').eq('id', contractorId).single(),
       supabase.from('contractor_mtd').select('*').eq('contractor_id', contractorId).single(),
-      supabase.from('sources').select('*').eq('contractor_id', contractorId).order('created_at'),
-      supabase.from('payment_models').select('*, payment_types(name)').eq('contractor_id', contractorId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      supabase.from('sources').select('*, payment_types(name)').eq('contractor_id', contractorId).order('created_at'),
       supabase.from('weekly_facts').select('*, sources(name)').eq('contractor_id', contractorId).order('week_start', { ascending: false }).limit(20),
       supabase.from('management_decisions').select('*, decision_types(name)').eq('contractor_id', contractorId).order('decision_date', { ascending: false }),
       supabase.from('status_history').select('*, old:old_status_id(name), new:new_status_id(name), reason:reason_id(name)').eq('contractor_id', contractorId).order('changed_at', { ascending: false }),
+      supabase.from('invoices').select('*').eq('contractor_id', contractorId).order('created_at', { ascending: false }),
+      supabase.from('contractor_files').select('*').eq('contractor_id', contractorId).order('uploaded_at', { ascending: false }),
+      supabase.from('payment_types').select('*').order('name'),
     ])
     setContractor(c.data)
+    setContractorForm(c.data || {})
     setMtd(m.data)
     setSources(s.data || [])
-    setPayment(p.data)
     setFacts(f.data || [])
     setDecisions(d.data || [])
     setStatusHistory(sh.data || [])
+    setInvoices(inv.data || [])
+    setFiles(fi.data || [])
+    setPaymentTypes(pt.data || [])
     setLoading(false)
   }
 
   useEffect(() => { load() }, [contractorId])
 
-  async function saveSource() {
-    if (!newSource.name) return
-    await supabase.from('sources').insert({ ...newSource, contractor_id: contractorId })
-    setNewSource({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '' })
+  // Сохранить источник (новый или редактирование)
+  async function saveSource(source) {
+    const payload = {
+      name: source.name,
+      roistat_marker: source.roistat_marker || null,
+      calltracking_phone: source.calltracking_phone || null,
+      landing_url: source.landing_url || null,
+      payment_type_id: source.payment_type_id ? Number(source.payment_type_id) : null,
+      cpl_rate: source.cpl_rate ? Number(source.cpl_rate) : null,
+      retainer: source.retainer ? Number(source.retainer) : null,
+      ad_budget: source.ad_budget ? Number(source.ad_budget) : null,
+      status: source.status || 'активен',
+    }
+    if (source.id) {
+      await supabase.from('sources').update(payload).eq('id', source.id)
+    } else {
+      await supabase.from('sources').insert({ ...payload, contractor_id: contractorId })
+    }
+    setEditingSource(null)
     setShowAddSource(false)
+    setNewSource({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '' })
+    load()
+  }
+
+  // Сохранить расход вручную
+  async function saveSpend() {
+    if (!spendForm.week_start || !spendForm.spend || !spendForm.entered_by) {
+      alert('Заполните неделю, расход и кто вносит')
+      return
+    }
+    setSpendLoading(true)
+
+    // Проверим есть ли уже запись за эту неделю для этого источника
+    const sourceId = spendForm.source_id || null
+    const { data: existing } = await supabase
+      .from('weekly_facts')
+      .select('id, spend')
+      .eq('contractor_id', contractorId)
+      .eq('week_start', spendForm.week_start)
+      .eq('source_id', sourceId || '')
+      .maybeSingle()
+
+    if (existing) {
+      // Обновляем только расход
+      await supabase.from('weekly_facts').update({
+        spend: Number(spendForm.spend),
+        entered_by: spendForm.entered_by,
+        comment: spendForm.comment || existing.comment,
+      }).eq('id', existing.id)
+    } else {
+      // Создаём новую запись только с расходом
+      await supabase.from('weekly_facts').insert({
+        contractor_id: contractorId,
+        source_id: sourceId,
+        week_start: spendForm.week_start,
+        spend: Number(spendForm.spend),
+        leads: 0, quals: 0, meetings: 0, deals: 0,
+        entered_by: spendForm.entered_by,
+        comment: spendForm.comment,
+        verify_status: 'введён',
+      })
+    }
+    setSpendLoading(false)
+    setSpendForm({ week_start: '', source_id: '', spend: '', entered_by: '', comment: '' })
+    load()
+  }
+
+  // Сохранить изменения подрядчика
+  async function saveContractor() {
+    await supabase.from('contractors').update({
+      name: contractorForm.name,
+      short_name: contractorForm.short_name,
+      responsible_name: contractorForm.responsible_name,
+      contact_name: contractorForm.contact_name,
+      contact_telegram: contractorForm.contact_telegram,
+      contact_phone: contractorForm.contact_phone,
+      contact_email: contractorForm.contact_email,
+      working_chat_url: contractorForm.working_chat_url,
+      comment: contractorForm.comment,
+      spend_by_source: contractorForm.spend_by_source,
+    }).eq('id', contractorId)
+    setEditContractor(false)
     load()
   }
 
@@ -58,30 +156,75 @@ export default function PassportPage({ contractorId, onBack }) {
   if (!contractor) return <div className="loading">Подрядчик не найден</div>
 
   const status = contractor.contractor_statuses?.name
-  const type = contractor.contractor_types?.name
-
-  // Alerts
   const alerts = []
-  if (mtd?.cpl_mtd > 1500) alerts.push({ type: 'danger', text: `CPL ${Math.round(mtd.cpl_mtd).toLocaleString('ru-RU')} ₽ — превышен допустимый порог (1 500 ₽)` })
+  if (mtd?.cpl_mtd > 1500) alerts.push({ type: 'danger', text: `CPL ${Math.round(mtd.cpl_mtd).toLocaleString('ru-RU')} ₽ — превышен порог (1 500 ₽)` })
   else if (mtd?.cpl_mtd > 1200) alerts.push({ type: 'warning', text: `CPL ${Math.round(mtd.cpl_mtd).toLocaleString('ru-RU')} ₽ — в жёлтой зоне` })
-  if (mtd?.cpql_mtd > 7500) alerts.push({ type: 'danger', text: `CPQL ${Math.round(mtd.cpql_mtd).toLocaleString('ru-RU')} ₽ — превышен допустимый порог` })
   if (mtd?.spend_mtd > 0 && mtd?.leads_mtd === 0) alerts.push({ type: 'danger', text: 'Есть расход, но нет лидов — аномалия' })
+
+  // Форма редактирования источника
+  function SourceForm({ source, onSave, onCancel }) {
+    const [form, setForm] = useState(source)
+    const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+    return (
+      <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14, marginBottom: 10 }}>
+        <div className="form-row">
+          <div className="form-group"><label className="form-label">Название <span className="req">*</span></label><input className="form-input" value={form.name || ''} onChange={e => set('name', e.target.value)} /></div>
+          <div className="form-group"><label className="form-label">Roistat marker</label><input className="form-input" value={form.roistat_marker || ''} onChange={e => set('roistat_marker', e.target.value)} placeholder="ofbfl-название" /></div>
+        </div>
+        <div className="form-row">
+          <div className="form-group"><label className="form-label">Телефон КТ</label><input className="form-input" value={form.calltracking_phone || ''} onChange={e => set('calltracking_phone', e.target.value)} /></div>
+          <div className="form-group"><label className="form-label">Посадочная</label><input className="form-input" value={form.landing_url || ''} onChange={e => set('landing_url', e.target.value)} /></div>
+        </div>
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 10, paddingTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Модель оплаты источника</div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Тип оплаты</label>
+              <select className="form-select" value={form.payment_type_id || ''} onChange={e => set('payment_type_id', e.target.value)}>
+                <option value="">— не задано —</option>
+                {paymentTypes.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group"><label className="form-label">Ставка CPL (₽)</label><input className="form-input" type="number" value={form.cpl_rate || ''} onChange={e => set('cpl_rate', e.target.value)} placeholder="0" /></div>
+          </div>
+          <div className="form-row">
+            <div className="form-group"><label className="form-label">Абонентка (₽)</label><input className="form-input" type="number" value={form.retainer || ''} onChange={e => set('retainer', e.target.value)} placeholder="0" /></div>
+            <div className="form-group"><label className="form-label">Рекл. бюджет (₽)</label><input className="form-input" type="number" value={form.ad_budget || ''} onChange={e => set('ad_budget', e.target.value)} placeholder="0" /></div>
+          </div>
+        </div>
+        {form.id && (
+          <div className="form-group">
+            <label className="form-label">Статус источника</label>
+            <select className="form-select" value={form.status || 'активен'} onChange={e => set('status', e.target.value)}>
+              <option value="активен">Активен</option>
+              <option value="пауза">Пауза</option>
+              <option value="отключён">Отключён</option>
+            </select>
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          <button className="btn btn-primary btn-sm" onClick={() => onSave(form)}>Сохранить</button>
+          <button className="btn btn-ghost btn-sm" onClick={onCancel}>Отмена</button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
       <button className="back-btn" onClick={onBack}>← Все подрядчики</button>
 
+      {/* Шапка */}
       <div className="passport-header">
         <div style={{ flex: 1 }}>
           <div className="passport-name">{contractor.name}</div>
           <div className="passport-meta">
             <span className={`badge ${getStatusClass(status)}`}>{status}</span>
-            {type && <span className="td-muted" style={{ fontSize: 12 }}>{type}</span>}
+            {contractor.contractor_types?.name && <span className="td-muted" style={{ fontSize: 12 }}>{contractor.contractor_types.name}</span>}
             {contractor.responsible_name && <span className="td-muted" style={{ fontSize: 12 }}>👤 {contractor.responsible_name}</span>}
+            {contractor.spend_by_source && <span className="badge badge-test" style={{ fontSize: 10 }}>расход по источникам</span>}
           </div>
-          {contractor.comment && (
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8, maxWidth: 600 }}>{contractor.comment}</div>
-          )}
+          {contractor.comment && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>{contractor.comment}</div>}
         </div>
         <div className="passport-actions">
           <button className="btn btn-secondary btn-sm" onClick={() => setShowFact(true)}>+ Факт</button>
@@ -102,44 +245,79 @@ export default function PassportPage({ contractorId, onBack }) {
         ))}
       </div>
 
+      {/* ОБЗОР */}
       {tab === 'Обзор' && (
         <div>
           <div className="metric-grid" style={{ marginBottom: 16 }}>
-            <div className={`metric-card ${mtd?.leads_mtd > 0 ? 'neutral' : ''}`}>
-              <div className="metric-card-label">Лиды МТД</div>
-              <div className="metric-card-value" style={{ color: 'var(--text)' }}>{mtd?.leads_mtd || 0}</div>
-            </div>
-            <div className={`metric-card ${mtd?.spend_mtd > 0 ? 'neutral' : ''}`}>
-              <div className="metric-card-label">Расход МТД</div>
-              <div className="metric-card-value" style={{ color: 'var(--text)', fontSize: 16 }}>{formatMoney(mtd?.spend_mtd)}</div>
-            </div>
-            <div className={`metric-card ${metricCardClass('cpl', mtd?.cpl_mtd)}`}>
-              <div className="metric-card-label">CPL</div>
-              <div className="metric-card-value" style={{ fontSize: 16 }}>{mtd?.cpl_mtd ? formatMoney(mtd.cpl_mtd) : '—'}</div>
-              <div className="metric-card-sub">порог 1 500 ₽</div>
-            </div>
-            <div className={`metric-card ${metricCardClass('cpql', mtd?.cpql_mtd)}`}>
-              <div className="metric-card-label">CPQL</div>
-              <div className="metric-card-value" style={{ fontSize: 16 }}>{mtd?.cpql_mtd ? formatMoney(mtd.cpql_mtd) : '—'}</div>
-              <div className="metric-card-sub">порог 7 500 ₽</div>
-            </div>
-            <div className={`metric-card ${metricCardClass('cac', mtd?.cac_mtd)}`}>
-              <div className="metric-card-label">CAC накопит.</div>
-              <div className="metric-card-value" style={{ fontSize: 14 }}>{mtd?.cac_mtd ? formatMoney(mtd.cac_mtd) : '—'}</div>
-              <div className="metric-card-sub">порог 75 000 ₽</div>
-            </div>
+            {[
+              { label: 'Лиды МТД', val: mtd?.leads_mtd || 0, type: null },
+              { label: 'Расход МТД', val: formatMoney(mtd?.spend_mtd), type: null },
+              { label: 'CPL', val: mtd?.cpl_mtd ? formatMoney(mtd.cpl_mtd) : '—', type: 'cpl', raw: mtd?.cpl_mtd, sub: 'порог 1 500 ₽' },
+              { label: 'CPQL', val: mtd?.cpql_mtd ? formatMoney(mtd.cpql_mtd) : '—', type: 'cpql', raw: mtd?.cpql_mtd, sub: 'порог 7 500 ₽' },
+              { label: 'CAC накопит.', val: mtd?.cac_mtd ? formatMoney(mtd.cac_mtd) : '—', type: 'cac', raw: mtd?.cac_mtd, sub: 'порог 75 000 ₽' },
+            ].map(card => (
+              <div key={card.label} className={`metric-card ${card.type ? metricCardClass(card.type, card.raw) : 'neutral'}`}>
+                <div className="metric-card-label">{card.label}</div>
+                <div className="metric-card-value" style={{ fontSize: typeof card.val === 'string' && card.val.length > 8 ? 14 : 20 }}>{card.val}</div>
+                {card.sub && <div className="metric-card-sub">{card.sub}</div>}
+              </div>
+            ))}
           </div>
 
+          {/* Основная информация */}
           <div className="info-card">
-            <div className="info-card-title">Основная информация</div>
-            <div className="info-grid">
-              <div className="info-item"><div className="info-item-label">Контакт</div><div className="info-item-value">{contractor.contact_name || '—'}</div></div>
-              <div className="info-item"><div className="info-item-label">Telegram</div><div className="info-item-value">{contractor.contact_telegram || '—'}</div></div>
-              <div className="info-item"><div className="info-item-label">Телефон</div><div className="info-item-value">{contractor.contact_phone || '—'}</div></div>
-              <div className="info-item"><div className="info-item-label">Email</div><div className="info-item-value">{contractor.contact_email || '—'}</div></div>
-              <div className="info-item"><div className="info-item-label">Ответственный</div><div className="info-item-value">{contractor.responsible_name || '—'}</div></div>
-              <div className="info-item"><div className="info-item-label">Добавлен</div><div className="info-item-value">{formatDate(contractor.created_at)}</div></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div className="info-card-title" style={{ margin: 0 }}>Основная информация</div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEditContractor(!editContractor)}>✏️ Редактировать</button>
             </div>
+            {editContractor ? (
+              <div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Название</label><input className="form-input" value={contractorForm.name || ''} onChange={e => setContractorForm(f => ({ ...f, name: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Краткое название</label><input className="form-input" value={contractorForm.short_name || ''} onChange={e => setContractorForm(f => ({ ...f, short_name: e.target.value }))} /></div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Ответственный</label><input className="form-input" value={contractorForm.responsible_name || ''} onChange={e => setContractorForm(f => ({ ...f, responsible_name: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Контакт</label><input className="form-input" value={contractorForm.contact_name || ''} onChange={e => setContractorForm(f => ({ ...f, contact_name: e.target.value }))} /></div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Telegram</label><input className="form-input" value={contractorForm.contact_telegram || ''} onChange={e => setContractorForm(f => ({ ...f, contact_telegram: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Телефон</label><input className="form-input" value={contractorForm.contact_phone || ''} onChange={e => setContractorForm(f => ({ ...f, contact_phone: e.target.value }))} /></div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Email</label><input className="form-input" value={contractorForm.contact_email || ''} onChange={e => setContractorForm(f => ({ ...f, contact_email: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Рабочий чат (ссылка)</label><input className="form-input" value={contractorForm.working_chat_url || ''} onChange={e => setContractorForm(f => ({ ...f, working_chat_url: e.target.value }))} /></div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Комментарий</label>
+                  <textarea className="form-textarea" value={contractorForm.comment || ''} onChange={e => setContractorForm(f => ({ ...f, comment: e.target.value }))} rows={2} />
+                </div>
+                <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" id="spend_by_source" checked={contractorForm.spend_by_source || false} onChange={e => setContractorForm(f => ({ ...f, spend_by_source: e.target.checked }))} />
+                  <label htmlFor="spend_by_source" style={{ fontSize: 13, cursor: 'pointer' }}>Вводить расход по источникам отдельно</label>
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <button className="btn btn-primary btn-sm" onClick={saveContractor}>Сохранить</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditContractor(false)}>Отмена</button>
+                </div>
+              </div>
+            ) : (
+              <div className="info-grid">
+                {[
+                  { label: 'Контакт', val: contractor.contact_name },
+                  { label: 'Telegram', val: contractor.contact_telegram },
+                  { label: 'Телефон', val: contractor.contact_phone },
+                  { label: 'Email', val: contractor.contact_email },
+                  { label: 'Ответственный', val: contractor.responsible_name },
+                  { label: 'Добавлен', val: formatDate(contractor.created_at) },
+                ].map(item => (
+                  <div key={item.label} className="info-item">
+                    <div className="info-item-label">{item.label}</div>
+                    <div className="info-item-value">{item.val || '—'}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {decisions.length > 0 && (
@@ -151,7 +329,7 @@ export default function PassportPage({ contractorId, onBack }) {
                   <div className="timeline-title">{decisions[0].decision_types?.name || 'Решение'}</div>
                   <div className="timeline-meta">{decisions[0].author} · {formatDate(decisions[0].decision_date)}</div>
                   <div className="timeline-body">{decisions[0].comment}</div>
-                  {decisions[0].next_step && <div className="timeline-body" style={{ marginTop: 4 }}>→ {decisions[0].next_step}</div>}
+                  {decisions[0].next_step && <div className="timeline-body" style={{ marginTop: 4, color: 'var(--green-primary)', fontWeight: 500 }}>→ {decisions[0].next_step}</div>}
                 </div>
               </div>
             </div>
@@ -159,55 +337,127 @@ export default function PassportPage({ contractorId, onBack }) {
         </div>
       )}
 
-      {tab === 'Источники' && (
+      {/* ИСТОЧНИКИ И ОПЛАТА */}
+      {tab === 'Источники и оплата' && (
         <div>
           <div className="info-card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <div className="info-card-title" style={{ margin: 0 }}>Источники и метки</div>
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowAddSource(!showAddSource)}>+ Добавить</button>
+              <div className="info-card-title" style={{ margin: 0 }}>Источники подрядчика</div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowAddSource(!showAddSource)}>+ Добавить источник</button>
             </div>
 
             {showAddSource && (
-              <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14, marginBottom: 14 }}>
-                <div className="form-row">
-                  <div className="form-group"><label className="form-label">Название <span className="req">*</span></label><input className="form-input" value={newSource.name} onChange={e => setNewSource(s => ({ ...s, name: e.target.value }))} /></div>
-                  <div className="form-group"><label className="form-label">Roistat marker</label><input className="form-input" value={newSource.roistat_marker} onChange={e => setNewSource(s => ({ ...s, roistat_marker: e.target.value }))} /></div>
-                </div>
-                <div className="form-row">
-                  <div className="form-group"><label className="form-label">Телефон КТ</label><input className="form-input" value={newSource.calltracking_phone} onChange={e => setNewSource(s => ({ ...s, calltracking_phone: e.target.value }))} /></div>
-                  <div className="form-group"><label className="form-label">Посадочная</label><input className="form-input" value={newSource.landing_url} onChange={e => setNewSource(s => ({ ...s, landing_url: e.target.value }))} /></div>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn btn-primary btn-sm" onClick={saveSource}>Сохранить</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setShowAddSource(false)}>Отмена</button>
-                </div>
-              </div>
+              <SourceForm
+                source={newSource}
+                onSave={saveSource}
+                onCancel={() => setShowAddSource(false)}
+              />
             )}
 
             {sources.length === 0 ? (
               <div className="empty-state" style={{ padding: 24 }}>
                 <div className="empty-state-icon">📡</div>
                 <h3>Источники не добавлены</h3>
+                <p>Добавьте источники чтобы настроить маппинг из Битрикса</p>
               </div>
+            ) : (
+              <div>
+                {sources.map(s => (
+                  <div key={s.id}>
+                    {editingSource?.id === s.id ? (
+                      <SourceForm source={editingSource} onSave={saveSource} onCancel={() => setEditingSource(null)} />
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border-light)' }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            <span style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</span>
+                            <span className={`badge ${s.status === 'активен' ? 'badge-active' : 'badge-pause'}`}>{s.status}</span>
+                            {s.payment_types?.name && <span className="badge badge-test">{s.payment_types.name}</span>}
+                          </div>
+                          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                            {s.roistat_marker && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>🏷 <code style={{ background: 'var(--bg)', padding: '1px 4px', borderRadius: 3 }}>{s.roistat_marker}</code></span>}
+                            {s.calltracking_phone && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>📞 {s.calltracking_phone}</span>}
+                            {s.landing_url && <a href={s.landing_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--green-primary)' }}>🔗 ссылка ↗</a>}
+                            {s.cpl_rate && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>CPL: {formatMoney(s.cpl_rate)}</span>}
+                            {s.retainer && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Або: {formatMoney(s.retainer)}</span>}
+                            {s.ad_budget && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Бюджет: {formatMoney(s.ad_budget)}</span>}
+                          </div>
+                        </div>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setEditingSource({ ...s, payment_type_id: s.payment_type_id || '' })}>✏️</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* РАСХОД */}
+      {tab === 'Расход' && (
+        <div>
+          <div className="info-card" style={{ marginBottom: 12 }}>
+            <div className="info-card-title">Ввод расхода за неделю</div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Неделя (дата четверга) <span className="req">*</span></label>
+                <input className="form-input" type="date" value={spendForm.week_start} onChange={e => setSpendForm(f => ({ ...f, week_start: e.target.value }))} />
+              </div>
+              {contractor.spend_by_source && sources.length > 0 && (
+                <div className="form-group">
+                  <label className="form-label">Источник</label>
+                  <select className="form-select" value={spendForm.source_id} onChange={e => setSpendForm(f => ({ ...f, source_id: e.target.value }))}>
+                    <option value="">— все источники —</option>
+                    {sources.filter(s => s.status === 'активен').map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Расход (₽) <span className="req">*</span></label>
+                <input className="form-input" type="number" value={spendForm.spend} onChange={e => setSpendForm(f => ({ ...f, spend: e.target.value }))} placeholder="0" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Кто вносит <span className="req">*</span></label>
+                <input className="form-input" value={spendForm.entered_by} onChange={e => setSpendForm(f => ({ ...f, entered_by: e.target.value }))} placeholder="Имя" />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Комментарий</label>
+              <input className="form-input" value={spendForm.comment} onChange={e => setSpendForm(f => ({ ...f, comment: e.target.value }))} placeholder="Необязательно" />
+            </div>
+            <button className="btn btn-primary" onClick={saveSpend} disabled={spendLoading}>
+              {spendLoading ? 'Сохранение...' : '✓ Сохранить расход'}
+            </button>
+            {!contractor.spend_by_source && (
+              <div className="form-hint" style={{ marginTop: 8 }}>Расход вводится суммарно по подрядчику. Чтобы вводить по источникам — включите флаг в «Основной информации».</div>
+            )}
+          </div>
+
+          {/* История расходов */}
+          <div className="table-wrap">
+            <div className="table-toolbar"><span style={{ fontWeight: 600, fontSize: 13 }}>История расходов</span></div>
+            {facts.filter(f => f.spend > 0).length === 0 ? (
+              <div className="empty-state"><div className="empty-state-icon">💸</div><h3>Расходов нет</h3></div>
             ) : (
               <table>
                 <thead>
                   <tr>
-                    <th>Название</th>
-                    <th>Roistat marker</th>
-                    <th>Телефон КТ</th>
-                    <th>Посадочная</th>
-                    <th>Статус</th>
+                    <th>Неделя</th>
+                    <th>Источник</th>
+                    <th style={{ textAlign: 'right' }}>Расход</th>
+                    <th>Кто внёс</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sources.map(s => (
-                    <tr key={s.id}>
-                      <td style={{ fontWeight: 500 }}>{s.name}</td>
-                      <td className="td-mono">{s.roistat_marker || '—'}</td>
-                      <td>{s.calltracking_phone || '—'}</td>
-                      <td>{s.landing_url ? <a href={s.landing_url} target="_blank" rel="noreferrer" style={{ color: 'var(--green-primary)', fontSize: 12 }}>ссылка ↗</a> : '—'}</td>
-                      <td><span className={`badge ${s.status === 'активен' ? 'badge-active' : 'badge-pause'}`}>{s.status}</span></td>
+                  {facts.filter(f => f.spend > 0).map(f => (
+                    <tr key={f.id}>
+                      <td style={{ fontWeight: 500 }}>{formatDate(f.week_start)}</td>
+                      <td className="td-muted">{f.sources?.name || 'Суммарно'}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMoney(f.spend)}</td>
+                      <td className="td-muted">{f.entered_by || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -217,28 +467,7 @@ export default function PassportPage({ contractorId, onBack }) {
         </div>
       )}
 
-      {tab === 'Оплата' && (
-        <div className="info-card">
-          <div className="info-card-title">Модель оплаты</div>
-          {!payment ? (
-            <div className="empty-state" style={{ padding: 24 }}>
-              <div className="empty-state-icon">💳</div>
-              <h3>Модель оплаты не заполнена</h3>
-            </div>
-          ) : (
-            <div className="info-grid">
-              <div className="info-item"><div className="info-item-label">Тип оплаты</div><div className="info-item-value">{payment.payment_types?.name || '—'}</div></div>
-              <div className="info-item"><div className="info-item-label">Ставка CPL</div><div className="info-item-value">{formatMoney(payment.cpl_rate)}</div></div>
-              <div className="info-item"><div className="info-item-label">Абонентка</div><div className="info-item-value">{formatMoney(payment.retainer)}</div></div>
-              <div className="info-item"><div className="info-item-label">Рекл. бюджет</div><div className="info-item-value">{formatMoney(payment.ad_budget)}</div></div>
-              <div className="info-item"><div className="info-item-label">Предоплата</div><div className="info-item-value">{payment.has_prepayment ? 'Да' : 'Нет'}</div></div>
-              <div className="info-item"><div className="info-item-label">Остаток баланса</div><div className="info-item-value">{formatMoney(payment.balance)}</div></div>
-              {payment.comment && <div className="info-item" style={{ gridColumn: '1/-1' }}><div className="info-item-label">Комментарий</div><div className="info-item-value">{payment.comment}</div></div>}
-            </div>
-          )}
-        </div>
-      )}
-
+      {/* ФАКТ */}
       {tab === 'Факт' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
@@ -246,20 +475,20 @@ export default function PassportPage({ contractorId, onBack }) {
           </div>
           <div className="table-wrap">
             {facts.length === 0 ? (
-              <div className="empty-state"><div className="empty-state-icon">📅</div><h3>Нет данных</h3><p>Добавьте первую запись</p></div>
+              <div className="empty-state"><div className="empty-state-icon">📅</div><h3>Нет данных</h3><p>Данные появятся после загрузки выгрузки из Битрикса</p></div>
             ) : (
               <table>
                 <thead>
                   <tr>
                     <th>Неделя</th>
                     <th>Источник</th>
-                    <th style={{textAlign:'right'}}>Лиды</th>
-                    <th style={{textAlign:'right'}}>Расход</th>
-                    <th style={{textAlign:'right'}}>CPL</th>
-                    <th style={{textAlign:'right'}}>Квалы</th>
-                    <th style={{textAlign:'right'}}>CPQL</th>
-                    <th style={{textAlign:'right'}}>Встречи</th>
-                    <th style={{textAlign:'right'}}>Сделки</th>
+                    <th style={{ textAlign: 'right' }}>Лиды</th>
+                    <th style={{ textAlign: 'right' }}>Расход</th>
+                    <th style={{ textAlign: 'right' }}>CPL</th>
+                    <th style={{ textAlign: 'right' }}>Квалы</th>
+                    <th style={{ textAlign: 'right' }}>CPQL</th>
+                    <th style={{ textAlign: 'right' }}>Встречи</th>
+                    <th style={{ textAlign: 'right' }}>Сделки</th>
                     <th>Статус</th>
                   </tr>
                 </thead>
@@ -271,13 +500,13 @@ export default function PassportPage({ contractorId, onBack }) {
                       <tr key={f.id}>
                         <td style={{ fontWeight: 500 }}>{formatDate(f.week_start)}</td>
                         <td className="td-muted">{f.sources?.name || '—'}</td>
-                        <td style={{textAlign:'right'}}>{f.leads}</td>
-                        <td style={{textAlign:'right'}}>{formatMoney(f.spend)}</td>
-                        <td style={{textAlign:'right'}}><span className={`metric ${cplClass(cpl)}`}>{cpl ? formatMoney(cpl) : '—'}</span></td>
-                        <td style={{textAlign:'right'}}>{f.quals}</td>
-                        <td style={{textAlign:'right'}}><span className={`metric ${cpqlClass(cpql)}`}>{cpql ? formatMoney(cpql) : '—'}</span></td>
-                        <td style={{textAlign:'right'}}>{f.meetings}</td>
-                        <td style={{textAlign:'right'}}>{f.deals}</td>
+                        <td style={{ textAlign: 'right' }}>{f.leads}</td>
+                        <td style={{ textAlign: 'right' }}>{formatMoney(f.spend)}</td>
+                        <td style={{ textAlign: 'right' }}><span className={`metric ${cplClass(cpl)}`}>{cpl ? formatMoney(cpl) : '—'}</span></td>
+                        <td style={{ textAlign: 'right' }}>{f.quals}</td>
+                        <td style={{ textAlign: 'right' }}><span className={`metric ${cpqlClass(cpql)}`}>{cpql ? formatMoney(cpql) : '—'}</span></td>
+                        <td style={{ textAlign: 'right' }}>{f.meetings}</td>
+                        <td style={{ textAlign: 'right' }}>{f.deals}</td>
                         <td><span className={`badge ${f.verify_status === 'проверен' ? 'badge-active' : f.verify_status === 'отклонён' ? 'badge-off' : 'badge-new'}`}>{f.verify_status}</span></td>
                       </tr>
                     )
@@ -289,6 +518,7 @@ export default function PassportPage({ contractorId, onBack }) {
         </div>
       )}
 
+      {/* РЕШЕНИЯ */}
       {tab === 'Решения' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
@@ -314,6 +544,80 @@ export default function PassportPage({ contractorId, onBack }) {
         </div>
       )}
 
+      {/* СЧЕТА */}
+      {tab === 'Счета' && (
+        <div>
+          <div className="info-card" style={{ marginBottom: 12 }}>
+            <div className="info-card-title">Оплаченные счета</div>
+            <div className="alert alert-info">
+              ℹ️ Счета загружаются раз в месяц. Формат имени файла: <code>Подрядчик_НаЧто_Направление_Сумма</code>
+            </div>
+            <div style={{ marginTop: 12, color: 'var(--text-muted)', fontSize: 13 }}>
+              Загрузка счетов будет доступна в разделе «Счета» (общий раздел). Здесь отображаются счета привязанные к этому подрядчику.
+            </div>
+          </div>
+          {invoices.length === 0 ? (
+            <div className="empty-state"><div className="empty-state-icon">🧾</div><h3>Счетов нет</h3><p>Счета появятся после загрузки в общем разделе</p></div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Файл</th>
+                    <th>Назначение</th>
+                    <th>Направление</th>
+                    <th style={{ textAlign: 'right' }}>Сумма</th>
+                    <th>Месяц</th>
+                    <th>Статус</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map(inv => (
+                    <tr key={inv.id}>
+                      <td style={{ fontSize: 12 }}>{inv.file_name}</td>
+                      <td className="td-muted">{inv.parsed_purpose || '—'}</td>
+                      <td className="td-muted">{inv.parsed_direction || '—'}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMoney(inv.parsed_amount)}</td>
+                      <td className="td-muted">{inv.month ? new Date(inv.month).toLocaleString('ru-RU', { month: 'long', year: 'numeric' }) : '—'}</td>
+                      <td><span className={`badge ${inv.status === 'ok' ? 'badge-active' : inv.status === 'not_found' ? 'badge-off' : 'badge-new'}`}>{inv.status}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ФАЙЛЫ */}
+      {tab === 'Файлы' && (
+        <div className="info-card">
+          <div className="info-card-title">Документы подрядчика</div>
+          <div className="alert alert-info">ℹ️ Загрузка файлов (договор, NDA) через Supabase Storage — настроим отдельно</div>
+          {files.length === 0 ? (
+            <div className="empty-state" style={{ padding: 24 }}>
+              <div className="empty-state-icon">📄</div>
+              <h3>Файлов нет</h3>
+              <p>Договор и NDA будут здесь</p>
+            </div>
+          ) : (
+            <div className="timeline">
+              {files.map(f => (
+                <div key={f.id} className="timeline-item">
+                  <div className="timeline-icon">📄</div>
+                  <div className="timeline-content">
+                    <div className="timeline-title">{f.file_name}</div>
+                    <div className="timeline-meta">{f.uploaded_by} · {formatDate(f.uploaded_at)}</div>
+                    {f.file_url && <a href={f.file_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--green-primary)' }}>Открыть ↗</a>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ИСТОРИЯ */}
       {tab === 'История' && (
         <div>
           {statusHistory.length === 0 ? (
@@ -324,9 +628,7 @@ export default function PassportPage({ contractorId, onBack }) {
                 <div key={h.id} className="timeline-item">
                   <div className="timeline-icon">🔄</div>
                   <div className="timeline-content">
-                    <div className="timeline-title">
-                      {h.old?.name || '—'} → {h.new?.name || '—'}
-                    </div>
+                    <div className="timeline-title">{h.old?.name || '—'} → {h.new?.name || '—'}</div>
                     <div className="timeline-meta">{h.changed_by} · {formatDate(h.changed_at)}</div>
                     {h.reason?.name && <div className="timeline-body">Причина: {h.reason.name}</div>}
                     {h.comment && <div className="timeline-body">{h.comment}</div>}
@@ -338,28 +640,9 @@ export default function PassportPage({ contractorId, onBack }) {
         </div>
       )}
 
-      {showStatus && (
-        <ChangeStatusModal
-          contractor={contractor}
-          onClose={() => setShowStatus(false)}
-          onSaved={() => { setShowStatus(false); load() }}
-        />
-      )}
-      {showDecision && (
-        <AddDecisionModal
-          contractorId={contractorId}
-          onClose={() => setShowDecision(false)}
-          onSaved={() => { setShowDecision(false); load() }}
-        />
-      )}
-      {showFact && (
-        <WeeklyFactModal
-          contractorId={contractorId}
-          contractorName={contractor.short_name || contractor.name}
-          onClose={() => setShowFact(false)}
-          onSaved={() => { setShowFact(false); load() }}
-        />
-      )}
+      {showStatus && <ChangeStatusModal contractor={contractor} onClose={() => setShowStatus(false)} onSaved={() => { setShowStatus(false); load() }} />}
+      {showDecision && <AddDecisionModal contractorId={contractorId} onClose={() => setShowDecision(false)} onSaved={() => { setShowDecision(false); load() }} />}
+      {showFact && <WeeklyFactModal contractorId={contractorId} contractorName={contractor.short_name || contractor.name} onClose={() => setShowFact(false)} onSaved={() => { setShowFact(false); load() }} />}
     </div>
   )
 }
