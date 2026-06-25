@@ -4,6 +4,7 @@ import { getStatusClass, cplClass, cpqlClass, cacClass, formatMoney, formatDate,
 import ChangeStatusModal from '../components/ChangeStatusModal.jsx'
 import AddDecisionModal from '../components/AddDecisionModal.jsx'
 import WeeklyFactModal from '../components/WeeklyFactModal.jsx'
+import DeleteContractorModal from '../components/DeleteContractorModal.jsx'
 
 const TABS = ['Обзор', 'Источники и оплата', 'Расход', 'Факт', 'Решения', 'Счета', 'Файлы', 'История']
 
@@ -37,6 +38,8 @@ export default function PassportPage({ contractorId, onBack }) {
   const [spendForm, setSpendForm] = useState({ week_start: '', source_id: '', spend: '', entered_by: '', comment: '' })
   const [spendLoading, setSpendLoading] = useState(false)
   const [editContractor, setEditContractor] = useState(false)
+  const [showDelete, setShowDelete] = useState(false)
+  const [archiveStatusId, setArchiveStatusId] = useState(null)
   const [contractorForm, setContractorForm] = useState({})
 
   async function load() {
@@ -62,6 +65,9 @@ export default function PassportPage({ contractorId, onBack }) {
     setInvoices(inv.data || [])
     setFiles(fi.data || [])
     setPaymentTypes(pt.data || [])
+    // Найти id статуса Архив
+    const archiveStatus = (await supabase.from('contractor_statuses').select('id').eq('name', 'Архив').single()).data
+    setArchiveStatusId(archiveStatus?.id)
     setLoading(false)
   }
 
@@ -230,6 +236,7 @@ export default function PassportPage({ contractorId, onBack }) {
           <button className="btn btn-secondary btn-sm" onClick={() => setShowFact(true)}>+ Факт</button>
           <button className="btn btn-secondary btn-sm" onClick={() => setShowDecision(true)}>+ Решение</button>
           <button className="btn btn-secondary btn-sm" onClick={() => setShowStatus(true)}>Статус →</button>
+          <button className="btn btn-danger btn-sm" onClick={() => setShowDelete(true)}>🗑</button>
         </div>
       </div>
 
@@ -643,6 +650,7 @@ export default function PassportPage({ contractorId, onBack }) {
       {showStatus && <ChangeStatusModal contractor={contractor} onClose={() => setShowStatus(false)} onSaved={() => { setShowStatus(false); load() }} />}
       {showDecision && <AddDecisionModal contractorId={contractorId} onClose={() => setShowDecision(false)} onSaved={() => { setShowDecision(false); load() }} />}
       {showFact && <WeeklyFactModal contractorId={contractorId} contractorName={contractor.short_name || contractor.name} onClose={() => setShowFact(false)} onSaved={() => { setShowFact(false); load() }} />}
+      {showDelete && <DeleteContractorModal contractor={contractor} archiveStatusId={archiveStatusId} onClose={() => setShowDelete(false)} onDeleted={onBack} onArchived={() => { setShowDelete(false); load() }} />}
     </div>
   )
 }
