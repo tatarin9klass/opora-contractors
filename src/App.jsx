@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import ContractorsPage from './pages/ContractorsPage.jsx'
 import PassportPage from './pages/PassportPage.jsx'
+import ImportPage from './pages/ImportPage.jsx'
 
 const PAGE_TITLES = {
   dashboard: 'Дашборд',
@@ -53,7 +54,7 @@ export default function App() {
           {page === 'dashboard' && <DashboardPage onOpenPassport={openPassport} />}
           {page === 'contractors' && <ContractorsPage onOpenPassport={openPassport} />}
           {page === 'passport' && passportId && <PassportPage contractorId={passportId} onBack={backToList} />}
-          {page === 'import' && <ImportPlaceholder />}
+          {page === 'import' && <ImportPage />}
         </div>
       </div>
     </div>
