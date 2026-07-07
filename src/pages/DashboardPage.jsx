@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
-import { formatMoney, formatDate, getStatusClass } from '../lib/helpers.js'
+import { formatMoney } from '../lib/helpers.js'
 import SetTargetModal from '../components/SetTargetModal.jsx'
 
 function getISOWeek(date) {
@@ -12,17 +12,18 @@ function getISOWeek(date) {
 }
 
 function getWeekStart(date = new Date()) {
-  // Отчётная неделя Опоры: чт–ср
+  // Отчётная неделя Опоры: чт-ср
   const d = new Date(date)
   const day = d.getDay()
-  const diff = day >= 4 ? -(day - 4) : -(day + 3)
-  d.setDate(d.getDate() + diff)
+  const diff = day >= 4 ? day - 4 : day + 3
+  d.setDate(d.getDate() - diff)
   return d.toISOString().split('T')[0]
 }
 
 function weekLabel(dateStr) {
   const d = new Date(dateStr)
-  return `${getISOWeek(d)} неделя ${d.getFullYear()}`
+  const isCurrent = dateStr === getWeekStart()
+  return `${getISOWeek(d)} неделя ${d.getFullYear()}${isCurrent ? ' (текущая)' : ''}`
 }
 
 function monthKey(date = new Date()) {
@@ -48,10 +49,10 @@ function pct(fact, plan) {
 }
 
 export default function DashboardPage({ onOpenPassport }) {
-  const [mode, setMode] = useState('month')
+  const [mode, setMode] = useState('week')
   const [selectedMonth, setSelectedMonth] = useState(monthKey())
   const [selectedWeek, setSelectedWeek] = useState(getWeekStart())
-  const [allFacts, setAllFacts] = useState([])
+  const [weeklyStats, setWeeklyStats] = useState([])
   const [contractors, setContractors] = useState([])
   const [target, setTarget] = useState(null)
   const [availableWeeks, setAvailableWeeks] = useState([])
@@ -61,51 +62,40 @@ export default function DashboardPage({ onOpenPassport }) {
 
   async function load() {
     setLoading(true)
-    const [factsRes, contractorsRes, weeksRes] = await Promise.all([
-      supabase.from('weekly_facts').select('*, contractors(id, name, short_name, contractor_statuses(name, is_active))'),
+    const [statsRes, contractorsRes] = await Promise.all([
+      // ИСТОЧНИК ПРАВДЫ: weekly_stats (daily_facts + weekly_expenses), не weekly_facts
+      supabase.from('weekly_stats').select('*, contractors(id, name, short_name, contractor_statuses(name, is_active))'),
       supabase.from('contractor_mtd').select('*'),
-      supabase.from('weekly_facts').select('week_start').order('week_start', { ascending: false }),
     ])
-    setAllFacts(factsRes.data || [])
+    const stats = statsRes.data || []
+    setWeeklyStats(stats)
     setContractors(contractorsRes.data || [])
 
-    // Уникальные недели
-    const weeks = [...new Set((weeksRes.data || []).map(w => w.week_start))]
+    const weeks = [...new Set(stats.map(w => w.week_start))].sort((a, b) => b.localeCompare(a))
     setAvailableWeeks(weeks)
 
-    // Текущий + 2 вперёд + все прошлые с данными
     const now = new Date()
-    const futureMonths = [0, 1, 2].map(offset => {
-      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1)
-      return monthKey(d)
-    })
-    const months = [...new Set([
-      ...futureMonths,
-      ...weeks.map(w => monthKey(new Date(w)))
-    ])].sort((a, b) => b.localeCompare(a))
+    const futureMonths = [0, 1, 2].map(offset => monthKey(new Date(now.getFullYear(), now.getMonth() + offset, 1)))
+    const months = [...new Set([...futureMonths, ...weeks.map(w => monthKey(new Date(w)))])].sort((a, b) => b.localeCompare(a))
     setAvailableMonths(months)
 
     setLoading(false)
   }
 
   async function loadTarget() {
-    const { data } = await supabase
-      .from('monthly_targets')
-      .select('*')
-      .eq('month', selectedMonth)
-      .maybeSingle()
+    const { data } = await supabase.from('monthly_targets').select('*').eq('month', selectedMonth).maybeSingle()
     setTarget(data || null)
   }
 
   useEffect(() => { load() }, [])
   useEffect(() => { loadTarget() }, [selectedMonth])
 
-  function aggregate(facts) {
-    const spend = facts.reduce((s, f) => s + (f.spend || 0), 0)
-    const leads = facts.reduce((s, f) => s + (f.leads || 0), 0)
-    const quals = facts.reduce((s, f) => s + (f.quals || 0), 0)
-    const meetings = facts.reduce((s, f) => s + (f.meetings || 0), 0)
-    const deals = facts.reduce((s, f) => s + (f.deals || 0), 0)
+  function aggregate(rows) {
+    const leads = rows.reduce((s, r) => s + (r.leads || 0), 0)
+    const quals = rows.reduce((s, r) => s + (r.quals || 0), 0)
+    const meetings = rows.reduce((s, r) => s + (r.meetings || 0), 0)
+    const deals = rows.reduce((s, r) => s + (r.deals || 0), 0)
+    const spend = rows.reduce((s, r) => s + (Number(r.spend) || 0), 0)
     return {
       spend, leads, quals, meetings, deals,
       cpl: leads > 0 ? Math.round(spend / leads) : null,
@@ -117,17 +107,17 @@ export default function DashboardPage({ onOpenPassport }) {
     }
   }
 
-  const periodFacts = mode === 'month'
-    ? allFacts.filter(f => f.week_start >= selectedMonth && f.week_start < nextMonth(selectedMonth))
-    : allFacts.filter(f => f.week_start === selectedWeek)
-
   function nextMonth(m) {
     const d = new Date(m)
     d.setMonth(d.getMonth() + 1)
     return monthKey(d)
   }
 
-  const fact = aggregate(periodFacts)
+  const periodRows = mode === 'month'
+    ? weeklyStats.filter(r => r.week_start >= selectedMonth && r.week_start < nextMonth(selectedMonth))
+    : weeklyStats.filter(r => r.week_start === selectedWeek)
+
+  const fact = aggregate(periodRows)
 
   const weekRatio = 1 / 4.33
   function planVal(key) {
@@ -138,20 +128,16 @@ export default function DashboardPage({ onOpenPassport }) {
     return mode === 'week' && !costMetrics.includes(key) ? Math.round(v * weekRatio) : v
   }
 
-  const contractorIdsWithData = new Set(periodFacts.map(f => f.contractors?.id).filter(Boolean))
+  const contractorIdsWithData = new Set(periodRows.map(r => r.contractor_id).filter(Boolean))
   const activeContractors = contractors.filter(c => c.is_active)
   const noDataContractors = activeContractors.filter(c => !contractorIdsWithData.has(c.contractor_id))
-  const alertContractors = activeContractors.filter(c =>
-    (c.spend_mtd > 0 && c.leads_mtd === 0) || c.cpl_mtd > 1500
-  )
+  const alertContractors = activeContractors.filter(c => (c.spend_mtd > 0 && c.leads_mtd === 0) || c.cpl_mtd > 1500)
 
-  const periodLabel = mode === 'month'
-    ? monthLabel(selectedMonth)
-    : weekLabel(selectedWeek)
+  const periodLabel = mode === 'month' ? monthLabel(selectedMonth) : weekLabel(selectedWeek)
 
   if (loading) return <div className="loading">Загрузка дашборда...</div>
 
-  function fmtDev(metric, factRaw, planRaw, formatFn) {
+  function fmtDev(factRaw, planRaw, formatFn) {
     if (planRaw == null || factRaw == null) return null
     const dev = factRaw - planRaw
     const sign = dev > 0 ? '+' : ''
@@ -177,22 +163,18 @@ export default function DashboardPage({ onOpenPassport }) {
 
   return (
     <div>
-      {/* Шапка */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
           <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
             ПЛАН / ФАКТ
           </div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>
-            Дашборд за период: {periodLabel}
-          </div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>Дашборд за период: {periodLabel}</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
             Показатели считаются по всем подрядчикам, независимо от статуса
           </div>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-          {/* Переключатель */}
           <div style={{ display: 'flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 24, padding: 3 }}>
             {['month', 'week'].map(m => (
               <button key={m} onClick={() => setMode(m)} style={{
@@ -204,23 +186,19 @@ export default function DashboardPage({ onOpenPassport }) {
             ))}
           </div>
 
-          {/* Выбор периода */}
           {mode === 'month' ? (
             <select className="form-select" style={{ minWidth: 200 }} value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
-              {availableMonths.map(m => (
-                <option key={m} value={m}>{monthLabel(m)}</option>
-              ))}
+              {availableMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
             </select>
           ) : (
             <select className="form-select" style={{ minWidth: 200 }} value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}>
               {availableWeeks.length === 0
-                ? <option value={getWeekStart()}>{weekLabel(getWeekStart())} (текущая)</option>
+                ? <option value={getWeekStart()}>{weekLabel(getWeekStart())}</option>
                 : availableWeeks.map(w => <option key={w} value={w}>{weekLabel(w)}</option>)
               }
             </select>
           )}
 
-          {/* Кнопка плана */}
           {mode === 'month' && (
             <button className="btn btn-secondary btn-sm" onClick={() => setShowTargetModal(true)}>
               {target ? '✏️ Редактировать план' : '+ Задать план'}
@@ -229,19 +207,15 @@ export default function DashboardPage({ onOpenPassport }) {
         </div>
       </div>
 
-      {/* KPI карточки */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 20 }}>
         {kpiCards.map(card => {
           const p = planVal(card.key)
           const f = card.factRaw
           const pctVal = pct(f, p)
           const devColor = deviationColor(card.key, f, p)
-          const devStr = fmtDev(card.key, f, p, card.format)
+          const devStr = fmtDev(f, p, card.format)
           return (
-            <div key={card.label} style={{
-              background: 'var(--white)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-lg)', padding: '16px 14px'
-            }}>
+            <div key={card.label} style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '16px 14px' }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>{card.label}</div>
               <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{card.display}</div>
               {p != null ? (
@@ -258,22 +232,14 @@ export default function DashboardPage({ onOpenPassport }) {
         })}
       </div>
 
-      {/* Три колонки */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
-
-        {/* Дополнительные показатели */}
         <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20 }}>
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>Дополнительные показатели</div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
                 {['Метрика', 'План', 'Факт', '% вып.', 'Откл.'].map(h => (
-                  <th key={h} style={{
-                    textAlign: h === 'Метрика' ? 'left' : 'right',
-                    fontSize: 10, fontWeight: 600, color: 'var(--text-muted)',
-                    textTransform: 'uppercase', padding: '4px 6px',
-                    borderBottom: '1px solid var(--border)'
-                  }}>{h}</th>
+                  <th key={h} style={{ textAlign: h === 'Метрика' ? 'left' : 'right', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '4px 6px', borderBottom: '1px solid var(--border)' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -283,7 +249,7 @@ export default function DashboardPage({ onOpenPassport }) {
                 const f = row.factRaw
                 const pctVal = pct(f, p)
                 const devColor = deviationColor(row.key, f, p)
-                const devStr = fmtDev(row.key, f, p, row.format)
+                const devStr = fmtDev(f, p, row.format)
                 return (
                   <tr key={row.label} style={{ borderBottom: '1px solid var(--border-light)' }}>
                     <td style={{ padding: '8px 6px', fontSize: 12, fontWeight: 500 }}>{row.label}</td>
@@ -298,7 +264,6 @@ export default function DashboardPage({ onOpenPassport }) {
           </table>
         </div>
 
-        {/* Зоны внимания */}
         <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20 }}>
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>Зоны внимания</div>
           {alertContractors.length === 0 ? (
@@ -306,10 +271,7 @@ export default function DashboardPage({ onOpenPassport }) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {alertContractors.map(c => (
-                <div key={c.contractor_id} onClick={() => onOpenPassport(c.contractor_id)} style={{
-                  background: '#fdf2f2', border: '1px solid #f5c6c6',
-                  borderRadius: 'var(--radius)', padding: '10px 12px', cursor: 'pointer'
-                }}>
+                <div key={c.contractor_id} onClick={() => onOpenPassport(c.contractor_id)} style={{ background: '#fdf2f2', border: '1px solid #f5c6c6', borderRadius: 'var(--radius)', padding: '10px 12px', cursor: 'pointer' }}>
                   <div style={{ fontWeight: 600, fontSize: 13 }}>{c.short_name || c.name}</div>
                   <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 2 }}>
                     {c.cpl_mtd > 1500 && `CPL ${Math.round(c.cpl_mtd).toLocaleString('ru-RU')} ₽ — превышен порог`}
@@ -321,7 +283,6 @@ export default function DashboardPage({ onOpenPassport }) {
           )}
         </div>
 
-        {/* Нет данных за период */}
         <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20 }}>
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>Нет данных за период</div>
           {noDataContractors.length === 0 ? (
@@ -329,10 +290,7 @@ export default function DashboardPage({ onOpenPassport }) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {noDataContractors.map(c => (
-                <div key={c.contractor_id} onClick={() => onOpenPassport(c.contractor_id)} style={{
-                  background: '#fdf2f2', border: '1px solid #f5c6c6',
-                  borderRadius: 'var(--radius)', padding: '10px 12px', cursor: 'pointer'
-                }}>
+                <div key={c.contractor_id} onClick={() => onOpenPassport(c.contractor_id)} style={{ background: '#fdf2f2', border: '1px solid #f5c6c6', borderRadius: 'var(--radius)', padding: '10px 12px', cursor: 'pointer' }}>
                   <div style={{ fontWeight: 600, fontSize: 13 }}>{c.short_name || c.name}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                     {mode === 'week' ? `${weekLabel(selectedWeek)} — нет данных` : `${monthLabel(selectedMonth)} — нет данных`}
@@ -345,12 +303,7 @@ export default function DashboardPage({ onOpenPassport }) {
       </div>
 
       {showTargetModal && (
-        <SetTargetModal
-          month={selectedMonth}
-          existing={target}
-          onClose={() => setShowTargetModal(false)}
-          onSaved={() => { setShowTargetModal(false); loadTarget() }}
-        />
+        <SetTargetModal month={selectedMonth} existing={target} onClose={() => setShowTargetModal(false)} onSaved={() => { setShowTargetModal(false); loadTarget() }} />
       )}
     </div>
   )
