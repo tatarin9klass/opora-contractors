@@ -5,69 +5,71 @@ import { formatDate } from '../lib/helpers.js'
 const FUNCTION_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/bitrix-import'
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXV1ZWh4YXZ3bHJma29ubnp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNzY4MzAsImV4cCI6MjA5NzY1MjgzMH0.BvX2ZBVSs17Vuwq_ok_e_QyAck0FG2yYTtuOkbaUrqU'
 
-// Отчётная неделя Опоры: чт-ср
-function getWeekStartOf(date) {
-  const d = new Date(date)
-  const day = d.getDay()
-  const diff = day >= 4 ? day - 4 : day + 3
-  d.setDate(d.getDate() - diff)
-  d.setHours(0, 0, 0, 0)
-  return d
-}
+const DAY_NAMES = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']
 
 function toISODate(d) {
   return d.toISOString().split('T')[0]
 }
 
-function weekDaysFrom(thursday, upToDate = null) {
-  const days = []
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(thursday)
-    d.setDate(thursday.getDate() + i)
-    if (upToDate && d > upToDate) break
-    days.push(toISODate(d))
-  }
-  return days
+// Отчётная неделя Опоры: чт-ср. Возвращает четверг недели, содержащей date.
+function getWeekStartOf(date) {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  const day = d.getDay()
+  const diff = day >= 4 ? day - 4 : day + 3
+  d.setDate(d.getDate() - diff)
+  return d
 }
 
-// Список доступных дат для импорта:
-// - все прошедшие дни текущей отчётной недели (чт..сегодня)
-// - ЕСЛИ сегодня четверг (день начала новой недели) — дополнительно вся ТОЛЬКО ЧТО закрывшаяся
-//   предыдущая неделя целиком (чт..ср), чтобы можно было перепроверить и перезалить перед тем как
-//   она "закроется" окончательно для правок.
-function getSelectableDays() {
+function addDays(date, n) {
+  const d = new Date(date)
+  d.setDate(d.getDate() + n)
+  return d
+}
+
+// ЕДИНАЯ точка вычисления "сегодня" и границ недель — используется везде в компоненте,
+// чтобы исключить рассинхрон между разными частями интерфейса (был баг: две независимые
+// вычисления "сегодня" в разных местах файла расходились между собой).
+function computeDateContext() {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+
   const currentWeekThu = getWeekStartOf(today)
-  const isThursday = today.getDay() === 4 && toISODate(today) === toISODate(currentWeekThu)
+  const isThursday = toISODate(today) === toISODate(currentWeekThu)
 
-  const currentWeekDays = weekDaysFrom(currentWeekThu, today)
-
-  if (!isThursday) {
-    return currentWeekDays
+  const currentWeekDays = []
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(currentWeekThu, i)
+    if (d > today) break
+    currentWeekDays.push(toISODate(d))
   }
 
-  const prevWeekThu = new Date(currentWeekThu)
-  prevWeekThu.setDate(currentWeekThu.getDate() - 7)
-  const prevWeekDays = weekDaysFrom(prevWeekThu) // все 7 дней прошлой недели
+  let previousWeekDays = []
+  if (isThursday) {
+    const prevWeekThu = addDays(currentWeekThu, -7)
+    for (let i = 0; i < 7; i++) {
+      previousWeekDays.push(toISODate(addDays(prevWeekThu, i)))
+    }
+  }
 
-  return [...currentWeekDays, ...prevWeekDays]
+  return {
+    todayISO: toISODate(today),
+    currentWeekThuISO: toISODate(currentWeekThu),
+    isThursday,
+    currentWeekDays,
+    previousWeekDays,
+  }
 }
-
-const DAY_NAMES = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']
 
 export default function ImportPage() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0])
   const [unmatchedList, setUnmatchedList] = useState([])
   const [contractors, setContractors] = useState([])
 
-  const selectableDays = getSelectableDays()
-  const today = new Date().toISOString().split('T')[0]
-  const currentWeekThu = toISODate(getWeekStartOf(new Date()))
-  const isThursday = today === currentWeekThu
+  const ctx = computeDateContext()
+  const [selectedDate, setSelectedDate] = useState(ctx.todayISO)
 
   async function loadUnmatched() {
     const { data } = await supabase.from('unmatched_sources').select('*').is('linked_contractor_id', null).order('total_leads', { ascending: false })
@@ -113,6 +115,12 @@ export default function ImportPage() {
     loadUnmatched()
   }
 
+  function dayOptionLabel(d, isPrevWeekSection) {
+    const dateObj = new Date(d + 'T00:00:00')
+    const isToday = d === ctx.todayISO
+    return `${DAY_NAMES[dateObj.getDay()]} ${formatDate(d)}${isToday ? ' (сегодня)' : ''}${isPrevWeekSection ? ' · прошлая неделя' : ''}`
+  }
+
   return (
     <div>
       <div className="info-card" style={{ maxWidth: 760, marginBottom: 16 }}>
@@ -122,7 +130,7 @@ export default function ImportPage() {
           roistat-маркер источника. Расход вводится отдельно вручную.
         </div>
 
-        {isThursday && (
+        {ctx.isThursday && (
           <div className="alert alert-info">
             📅 Сегодня четверг — доступна вся только что закрывшаяся предыдущая неделя для перепроверки, помимо текущей.
           </div>
@@ -130,16 +138,18 @@ export default function ImportPage() {
 
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
           <select className="form-select" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}>
-            {selectableDays.map(d => {
-              const dateObj = new Date(d + 'T00:00:00')
-              const isToday = d === today
-              const isPrevWeek = d < currentWeekThu
-              return (
-                <option key={d} value={d}>
-                  {DAY_NAMES[dateObj.getDay()]} {formatDate(d)} {isToday ? '(сегодня)' : ''} {isPrevWeek ? '· прошлая неделя' : ''}
-                </option>
-              )
-            })}
+            <optgroup label="Текущая неделя">
+              {ctx.currentWeekDays.map(d => (
+                <option key={d} value={d}>{dayOptionLabel(d, false)}</option>
+              ))}
+            </optgroup>
+            {ctx.previousWeekDays.length > 0 && (
+              <optgroup label="Прошлая неделя (только сегодня, четверг)">
+                {ctx.previousWeekDays.map(d => (
+                  <option key={d} value={d}>{dayOptionLabel(d, true)}</option>
+                ))}
+              </optgroup>
+            )}
           </select>
           <button className="btn btn-primary" onClick={() => runImport()} disabled={loading}>
             {loading ? 'Импортируем...' : '📥 Импортировать за этот день'}
