@@ -25,8 +25,30 @@ const SORTABLE_COLUMNS = [
   { key: 'updated', label: 'Обновлён', field: r => r.updated_at || '' },
 ]
 
+// ТЗ раздел 6.2/7: отклонение >20% от личного плана подрядчика — направление
+// зависит от метрики (расход — если выше плана, остальное — если ниже).
+const DEVIATION_COST_METRICS = new Set(['spend'])
+const DEVIATION_THRESHOLD = 0.2
+
+function hasDeviationAlert(row, target) {
+  if (!target) return false
+  const pairs = [
+    ['spend', row.spend_mtd, target.plan_spend],
+    ['leads', row.leads_mtd, target.plan_leads],
+    ['quals', row.quals_mtd, target.plan_quals],
+    ['meetings', row.meetings_mtd, target.plan_meetings],
+    ['deals', row.deals_mtd, target.plan_deals],
+  ]
+  return pairs.some(([key, fact, plan]) => {
+    if (!plan) return false
+    const dev = ((fact || 0) - plan) / plan
+    return DEVIATION_COST_METRICS.has(key) ? dev > DEVIATION_THRESHOLD : dev < -DEVIATION_THRESHOLD
+  })
+}
+
 export default function ContractorsPage({ onOpenPassport }) {
   const [rows, setRows] = useState([])
+  const [targets, setTargets] = useState({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -38,8 +60,14 @@ export default function ContractorsPage({ onOpenPassport }) {
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase.from('contractor_mtd').select('*')
+    const [{ data }, { data: targetRows }] = await Promise.all([
+      supabase.from('contractor_mtd').select('*'),
+      supabase.from('contractor_targets').select('*'),
+    ])
     setRows(data || [])
+    const targetsMap = {}
+    ;(targetRows || []).forEach(t => { targetsMap[t.contractor_id] = t })
+    setTargets(targetsMap)
     setLoading(false)
   }
 
@@ -87,7 +115,7 @@ export default function ContractorsPage({ onOpenPassport }) {
 
   const activeCount = rows.filter(r => r.is_active).length
   const testCount = rows.filter(r => r.status === 'Тест').length
-  const alertCount = rows.filter(r => r.is_active && r.cpl_mtd > 1500).length
+  const alertCount = rows.filter(r => r.is_active && hasDeviationAlert(r, targets[r.contractor_id])).length
 
   function SortIcon({ colKey }) {
     if (sortKey !== colKey) return <span style={{ opacity: 0.25, marginLeft: 4 }}>↕</span>
@@ -107,9 +135,9 @@ export default function ContractorsPage({ onOpenPassport }) {
           <div className="kpi-value">{testCount}</div>
         </div>
         <div className="kpi-card yellow">
-          <div className="kpi-label">Превышение CPL</div>
+          <div className="kpi-label">Зоны внимания</div>
           <div className="kpi-value">{alertCount}</div>
-          <div className="kpi-sub">подрядчиков в зоне риска</div>
+          <div className="kpi-sub">отклонение &gt;20% от плана</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">Всего подрядчиков</div>
@@ -167,7 +195,12 @@ export default function ContractorsPage({ onOpenPassport }) {
               <tbody>
                 {sortedRows.map(r => (
                   <tr key={r.contractor_id}>
-                    <td><span className="td-name" onClick={() => onOpenPassport(r.contractor_id)}>{r.short_name || r.name}</span></td>
+                    <td>
+                      <span className="td-name" onClick={() => onOpenPassport(r.contractor_id)}>{r.short_name || r.name}</span>
+                      {hasDeviationAlert(r, targets[r.contractor_id]) && (
+                        <span title="Отклонение >20% от плана" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', marginLeft: 7, verticalAlign: 'middle' }} />
+                      )}
+                    </td>
                     <td className="td-muted">{r.type || '—'}</td>
                     <td><span className={`badge ${getStatusClass(r.status)}`}>{r.status}</span></td>
                     <td style={{ textAlign: 'right' }} className="metric">{r.leads_mtd || 0}</td>
