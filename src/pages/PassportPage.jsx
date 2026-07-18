@@ -45,6 +45,10 @@ export default function PassportPage({ contractorId, onBack }) {
   const [editTarget, setEditTarget] = useState(false)
   const [targetForm, setTargetForm] = useState({})
   const [targetSaving, setTargetSaving] = useState(false)
+  const [uploadFileType, setUploadFileType] = useState('Договор')
+  const [uploadedByName, setUploadedByName] = useState('')
+  const [selectedFile, setSelectedFile] = useState(null)
+  const [uploading, setUploading] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -143,6 +147,31 @@ export default function PassportPage({ contractorId, onBack }) {
     setTargetSaving(false)
     if (error) { alert('Ошибка: ' + error.message); return }
     setEditTarget(false)
+    load()
+  }
+
+  // Загрузка документа (ТЗ раздел 10.2) — только 2 типа, без сроков действия
+  async function uploadFile() {
+    if (!selectedFile || !uploadedByName) {
+      alert('Выберите файл и укажите, кто загружает')
+      return
+    }
+    setUploading(true)
+    const path = `${contractorId}/${Date.now()}-${selectedFile.name}`
+    const { error: uploadError } = await supabase.storage.from('contractor-files').upload(path, selectedFile)
+    if (uploadError) { alert('Ошибка загрузки: ' + uploadError.message); setUploading(false); return }
+
+    const { data: pub } = supabase.storage.from('contractor-files').getPublicUrl(path)
+    const { error } = await supabase.from('contractor_files').insert({
+      contractor_id: contractorId,
+      file_name: selectedFile.name,
+      file_url: pub.publicUrl,
+      file_type: uploadFileType,
+      uploaded_by: uploadedByName,
+    })
+    setUploading(false)
+    if (error) { alert('Ошибка: ' + error.message); return }
+    setSelectedFile(null)
     load()
   }
 
@@ -569,7 +598,30 @@ export default function PassportPage({ contractorId, onBack }) {
       {tab === 'Файлы' && (
         <div className="info-card">
           <div className="info-card-title">Документы подрядчика</div>
-          <div className="alert alert-info">ℹ️ Загрузка файлов (договор, NDA) через Supabase Storage — настроим отдельно</div>
+
+          <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14, marginBottom: 16 }}>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Тип документа</label>
+                <select className="form-select" value={uploadFileType} onChange={e => setUploadFileType(e.target.value)}>
+                  <option value="Договор">Договор</option>
+                  <option value="NDA">NDA</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Кто загружает <span className="req">*</span></label>
+                <input className="form-input" value={uploadedByName} onChange={e => setUploadedByName(e.target.value)} placeholder="Имя" />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Файл <span className="req">*</span></label>
+              <input className="form-input" type="file" onChange={e => setSelectedFile(e.target.files?.[0] || null)} />
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={uploadFile} disabled={uploading}>
+              {uploading ? 'Загрузка...' : '📤 Загрузить'}
+            </button>
+          </div>
+
           {files.length === 0 ? (
             <div className="empty-state" style={{ padding: 24 }}>
               <div className="empty-state-icon">📄</div>
@@ -582,7 +634,10 @@ export default function PassportPage({ contractorId, onBack }) {
                 <div key={f.id} className="timeline-item">
                   <div className="timeline-icon">📄</div>
                   <div className="timeline-content">
-                    <div className="timeline-title">{f.file_name}</div>
+                    <div className="timeline-title">
+                      {f.file_type && <span className="badge badge-test" style={{ marginRight: 6 }}>{f.file_type}</span>}
+                      {f.file_name}
+                    </div>
                     <div className="timeline-meta">{f.uploaded_by} · {formatDate(f.uploaded_at)}</div>
                     {f.file_url && <a href={f.file_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--green-primary)' }}>Открыть ↗</a>}
                   </div>
