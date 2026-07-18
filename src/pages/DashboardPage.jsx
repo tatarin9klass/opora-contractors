@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { formatMoney } from '../lib/helpers.js'
+import { weekStart as getWeekStart } from '../lib/dateContext.js'
 import SetTargetModal from '../components/SetTargetModal.jsx'
 
 function getISOWeek(date) {
@@ -9,15 +10,6 @@ function getISOWeek(date) {
   d.setUTCDate(d.getUTCDate() + 4 - dayNum)
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
   return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
-}
-
-function getWeekStart(date = new Date()) {
-  // Отчётная неделя Опоры: чт-ср
-  const d = new Date(date)
-  const day = d.getDay()
-  const diff = day >= 4 ? day - 4 : day + 3
-  d.setDate(d.getDate() - diff)
-  return d.toISOString().split('T')[0]
 }
 
 function weekLabel(dateStr) {
@@ -120,12 +112,35 @@ export default function DashboardPage({ onOpenPassport }) {
   const fact = aggregate(periodRows)
 
   const weekRatio = 1 / 4.33
-  function planVal(key) {
+  const BASE_PLAN_KEYS = ['spend', 'leads', 'quals', 'meetings', 'deals']
+
+  // Только 5 базовых метрик хранятся в target (ТЗ раздел 5.1) — плановые значения
+  // производных метрик (CPL/CPQL/CAC/CR) считаются из них теми же формулами,
+  // что и факт в aggregate(), а не читаются из отдельных колонок.
+  function basePlanVal(key) {
     if (!target) return null
     const v = target[`plan_${key}`]
     if (v == null) return null
-    const costMetrics = ['cpl', 'cpql', 'cac', 'cr_lq', 'cr_qm', 'cr_mo']
-    return mode === 'week' && !costMetrics.includes(key) ? Math.round(v * weekRatio) : v
+    return mode === 'week' ? v * weekRatio : v
+  }
+
+  function planVal(key) {
+    if (BASE_PLAN_KEYS.includes(key)) {
+      const v = basePlanVal(key)
+      return v == null ? null : Math.round(v)
+    }
+    const spend = basePlanVal('spend')
+    const leads = basePlanVal('leads')
+    const quals = basePlanVal('quals')
+    const meetings = basePlanVal('meetings')
+    const deals = basePlanVal('deals')
+    if (key === 'cpl') return leads > 0 ? Math.round(spend / leads) : null
+    if (key === 'cpql') return quals > 0 ? Math.round(spend / quals) : null
+    if (key === 'cac') return deals > 0 ? Math.round(spend / deals) : null
+    if (key === 'cr_lq') return leads > 0 ? Math.round((quals / leads) * 1000) / 10 : null
+    if (key === 'cr_qm') return quals > 0 ? Math.round((meetings / quals) * 1000) / 10 : null
+    if (key === 'cr_mo') return meetings > 0 ? Math.round((deals / meetings) * 1000) / 10 : null
+    return null
   }
 
   const contractorIdsWithData = new Set(periodRows.map(r => r.contractor_id).filter(Boolean))

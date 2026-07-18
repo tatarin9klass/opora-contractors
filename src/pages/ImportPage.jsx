@@ -1,65 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { formatDate } from '../lib/helpers.js'
+import { computeDateContext } from '../lib/dateContext.js'
 
 const FUNCTION_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/bitrix-import'
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXV1ZWh4YXZ3bHJma29ubnp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNzY4MzAsImV4cCI6MjA5NzY1MjgzMH0.BvX2ZBVSs17Vuwq_ok_e_QyAck0FG2yYTtuOkbaUrqU'
 
 const DAY_NAMES = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']
-
-function toISODate(d) {
-  return d.toISOString().split('T')[0]
-}
-
-// Отчётная неделя Опоры: чт-ср. Возвращает четверг недели, содержащей date.
-function getWeekStartOf(date) {
-  const d = new Date(date)
-  d.setHours(0, 0, 0, 0)
-  const day = d.getDay()
-  const diff = day >= 4 ? day - 4 : day + 3
-  d.setDate(d.getDate() - diff)
-  return d
-}
-
-function addDays(date, n) {
-  const d = new Date(date)
-  d.setDate(d.getDate() + n)
-  return d
-}
-
-// ЕДИНАЯ точка вычисления "сегодня" и границ недель — используется везде в компоненте,
-// чтобы исключить рассинхрон между разными частями интерфейса (был баг: две независимые
-// вычисления "сегодня" в разных местах файла расходились между собой).
-function computeDateContext() {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-
-  const currentWeekThu = getWeekStartOf(today)
-  const isThursday = toISODate(today) === toISODate(currentWeekThu)
-
-  const currentWeekDays = []
-  for (let i = 0; i < 7; i++) {
-    const d = addDays(currentWeekThu, i)
-    if (d > today) break
-    currentWeekDays.push(toISODate(d))
-  }
-
-  let previousWeekDays = []
-  if (isThursday) {
-    const prevWeekThu = addDays(currentWeekThu, -7)
-    for (let i = 0; i < 7; i++) {
-      previousWeekDays.push(toISODate(addDays(prevWeekThu, i)))
-    }
-  }
-
-  return {
-    todayISO: toISODate(today),
-    currentWeekThuISO: toISODate(currentWeekThu),
-    isThursday,
-    currentWeekDays,
-    previousWeekDays,
-  }
-}
 
 export default function ImportPage() {
   const [loading, setLoading] = useState(false)
@@ -68,8 +15,29 @@ export default function ImportPage() {
   const [unmatchedList, setUnmatchedList] = useState([])
   const [contractors, setContractors] = useState([])
 
-  const ctx = computeDateContext()
+  // computeDateContext() пересчитывается не только при монтировании, но и при
+  // возврате фокуса на вкладку — чтобы "сегодня" не залипало, если вкладка
+  // была открыта дольше суток (см. docs/TZ.md, раздел 2).
+  const [ctx, setCtx] = useState(() => computeDateContext())
   const [selectedDate, setSelectedDate] = useState(ctx.todayISO)
+
+  useEffect(() => {
+    function refreshDateContext() {
+      if (document.visibilityState !== 'visible') return
+      const next = computeDateContext()
+      setCtx(prev => {
+        if (prev.todayISO === next.todayISO) return prev
+        setSelectedDate(sel => (sel === prev.todayISO ? next.todayISO : sel))
+        return next
+      })
+    }
+    document.addEventListener('visibilitychange', refreshDateContext)
+    window.addEventListener('focus', refreshDateContext)
+    return () => {
+      document.removeEventListener('visibilitychange', refreshDateContext)
+      window.removeEventListener('focus', refreshDateContext)
+    }
+  }, [])
 
   async function loadUnmatched() {
     const { data } = await supabase.from('unmatched_sources').select('*').is('linked_contractor_id', null).order('total_leads', { ascending: false })
