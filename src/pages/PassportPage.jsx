@@ -41,10 +41,14 @@ export default function PassportPage({ contractorId, onBack }) {
   const [showDelete, setShowDelete] = useState(false)
   const [archiveStatusId, setArchiveStatusId] = useState(null)
   const [contractorForm, setContractorForm] = useState({})
+  const [target, setTarget] = useState(null)
+  const [editTarget, setEditTarget] = useState(false)
+  const [targetForm, setTargetForm] = useState({})
+  const [targetSaving, setTargetSaving] = useState(false)
 
   async function load() {
     setLoading(true)
-    const [c, m, s, f, d, sh, inv, fi, pt] = await Promise.all([
+    const [c, m, s, f, d, sh, inv, fi, pt, tg] = await Promise.all([
       supabase.from('contractors').select('*, contractor_types(name), contractor_statuses(name, is_active)').eq('id', contractorId).single(),
       supabase.from('contractor_mtd').select('*').eq('contractor_id', contractorId).single(),
       supabase.from('sources').select('*, payment_types(name)').eq('contractor_id', contractorId).order('created_at'),
@@ -54,6 +58,7 @@ export default function PassportPage({ contractorId, onBack }) {
       supabase.from('invoices').select('*').eq('contractor_id', contractorId).order('created_at', { ascending: false }),
       supabase.from('contractor_files').select('*').eq('contractor_id', contractorId).order('uploaded_at', { ascending: false }),
       supabase.from('payment_types').select('*').order('name'),
+      supabase.from('contractor_targets').select('*').eq('contractor_id', contractorId).maybeSingle(),
     ])
     setContractor(c.data)
     setContractorForm(c.data || {})
@@ -65,6 +70,8 @@ export default function PassportPage({ contractorId, onBack }) {
     setInvoices(inv.data || [])
     setFiles(fi.data || [])
     setPaymentTypes(pt.data || [])
+    setTarget(tg.data || null)
+    setTargetForm(tg.data || {})
     // Найти id статуса Архив
     const archiveStatus = (await supabase.from('contractor_statuses').select('id').eq('name', 'Архив').single()).data
     setArchiveStatusId(archiveStatus?.id)
@@ -155,6 +162,30 @@ export default function PassportPage({ contractorId, onBack }) {
       spend_by_source: contractorForm.spend_by_source,
     }).eq('id', contractorId)
     setEditContractor(false)
+    load()
+  }
+
+  // Сохранить план подрядчика (ТЗ раздел 5.2) — не месячный, правится вручную по мере необходимости
+  async function saveTarget() {
+    if (!targetForm.plan_spend || !targetForm.plan_leads || !targetForm.plan_quals || !targetForm.plan_meetings || !targetForm.plan_deals) {
+      alert('Заполните все 5 полей плана')
+      return
+    }
+    setTargetSaving(true)
+    const payload = {
+      contractor_id: contractorId,
+      plan_spend: Number(targetForm.plan_spend),
+      plan_leads: Number(targetForm.plan_leads),
+      plan_quals: Number(targetForm.plan_quals),
+      plan_meetings: Number(targetForm.plan_meetings),
+      plan_deals: Number(targetForm.plan_deals),
+      updated_at: new Date().toISOString(),
+      updated_by: targetForm.updated_by || '',
+    }
+    const { error } = await supabase.from('contractor_targets').upsert(payload, { onConflict: 'contractor_id' })
+    setTargetSaving(false)
+    if (error) { alert('Ошибка: ' + error.message); return }
+    setEditTarget(false)
     load()
   }
 
@@ -269,6 +300,60 @@ export default function PassportPage({ contractorId, onBack }) {
                 {card.sub && <div className="metric-card-sub">{card.sub}</div>}
               </div>
             ))}
+          </div>
+
+          {/* План подрядчика (ТЗ раздел 5.2) */}
+          <div className="info-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div className="info-card-title" style={{ margin: 0 }}>План подрядчика</div>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setTargetForm(target || {}); setEditTarget(!editTarget) }}>
+                {target ? '✏️ Редактировать' : '+ Задать план'}
+              </button>
+            </div>
+            {editTarget ? (
+              <div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Расход (₽)</label><input className="form-input" type="number" value={targetForm.plan_spend || ''} onChange={e => setTargetForm(f => ({ ...f, plan_spend: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Лиды</label><input className="form-input" type="number" value={targetForm.plan_leads || ''} onChange={e => setTargetForm(f => ({ ...f, plan_leads: e.target.value }))} /></div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Квалы</label><input className="form-input" type="number" value={targetForm.plan_quals || ''} onChange={e => setTargetForm(f => ({ ...f, plan_quals: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Встречи</label><input className="form-input" type="number" value={targetForm.plan_meetings || ''} onChange={e => setTargetForm(f => ({ ...f, plan_meetings: e.target.value }))} /></div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Сделки</label><input className="form-input" type="number" value={targetForm.plan_deals || ''} onChange={e => setTargetForm(f => ({ ...f, plan_deals: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Кто скорректировал</label><input className="form-input" value={targetForm.updated_by || ''} onChange={e => setTargetForm(f => ({ ...f, updated_by: e.target.value }))} placeholder="Имя" /></div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <button className="btn btn-primary btn-sm" onClick={saveTarget} disabled={targetSaving}>{targetSaving ? 'Сохранение...' : 'Сохранить'}</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditTarget(false)}>Отмена</button>
+                </div>
+              </div>
+            ) : target ? (
+              <div>
+                <div className="info-grid">
+                  {[
+                    { label: 'Расход', val: formatMoney(target.plan_spend) },
+                    { label: 'Лиды', val: target.plan_leads },
+                    { label: 'Квалы', val: target.plan_quals },
+                    { label: 'Встречи', val: target.plan_meetings },
+                    { label: 'Сделки', val: target.plan_deals },
+                  ].map(item => (
+                    <div key={item.label} className="info-item">
+                      <div className="info-item-label">{item.label}</div>
+                      <div className="info-item-value">{item.val ?? '—'}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
+                  Обновлено {formatDate(target.updated_at)}{target.updated_by ? ` · ${target.updated_by}` : ''}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                План не задан — подрядчик не участвует в контроле отклонений на дашборде.
+              </div>
+            )}
           </div>
 
           {/* Основная информация */}

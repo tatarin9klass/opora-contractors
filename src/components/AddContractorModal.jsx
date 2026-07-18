@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
 
+// ТЗ раздел 8.1: в работе только 3 модели оплаты — остальные (CPL, Процент,
+// Смешанная) остаются в справочнике для истории, но скрыты из выбора.
+const ACTIVE_PAYMENT_TYPES = ['Фикс', 'Абонентка', 'Абонентка + бюджет']
+
 export default function AddContractorModal({ onClose, onSaved }) {
   const [types, setTypes] = useState([])
   const [statuses, setStatuses] = useState([])
@@ -22,6 +26,12 @@ export default function AddContractorModal({ onClose, onSaved }) {
     cpl_rate: '',
     retainer: '',
     ad_budget: '',
+    // План подрядчика (ТЗ раздел 5.2) — вводится один раз здесь, дальше правится вручную
+    plan_spend: '',
+    plan_leads: '',
+    plan_quals: '',
+    plan_meetings: '',
+    plan_deals: '',
   })
 
   useEffect(() => {
@@ -48,6 +58,12 @@ export default function AddContractorModal({ onClose, onSaved }) {
     }
     if (!form.source_name) {
       alert('Добавьте хотя бы один источник (roistat marker)')
+      return
+    }
+    // ТЗ раздел 5.2: план подрядчика обязателен при создании — без него
+    // подрядчик не попадёт в контроль отклонений ("Зоны внимания").
+    if (!form.plan_spend || !form.plan_leads || !form.plan_quals || !form.plan_meetings || !form.plan_deals) {
+      alert('Заполните план подрядчика на месяц (все 5 полей обязательны)')
       return
     }
     setLoading(true)
@@ -78,6 +94,18 @@ export default function AddContractorModal({ onClose, onSaved }) {
       ad_budget: form.ad_budget ? Number(form.ad_budget) : null,
       status: 'активен',
     })
+
+    // Создаём план подрядчика
+    const { error: targetError } = await supabase.from('contractor_targets').insert({
+      contractor_id: contractor.id,
+      plan_spend: Number(form.plan_spend),
+      plan_leads: Number(form.plan_leads),
+      plan_quals: Number(form.plan_quals),
+      plan_meetings: Number(form.plan_meetings),
+      plan_deals: Number(form.plan_deals),
+      updated_by: form.responsible_name,
+    })
+    if (targetError) { alert('Подрядчик создан, но план сохранить не удалось: ' + targetError.message) }
 
     setLoading(false)
     onSaved(contractor)
@@ -168,7 +196,7 @@ export default function AddContractorModal({ onClose, onSaved }) {
                 <label className="form-label">Тип оплаты</label>
                 <select className="form-select" value={form.payment_type_id} onChange={e => set('payment_type_id', e.target.value)}>
                   <option value="">— выберите —</option>
-                  {paymentTypes.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {paymentTypes.filter(p => ACTIVE_PAYMENT_TYPES.includes(p.name)).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
               <div className="form-group">
@@ -186,6 +214,37 @@ export default function AddContractorModal({ onClose, onSaved }) {
                 <label className="form-label">Плановый бюджет (₽/мес)</label>
                 <input className="form-input" type="number" value={form.ad_budget} onChange={e => set('ad_budget', e.target.value)} placeholder="0" />
               </div>
+            </div>
+          </div>
+
+          <div className="form-section">
+            <div className="form-section-title">План подрядчика на месяц <span className="req">*</span></div>
+            <div className="form-hint" style={{ marginBottom: 8 }}>
+              Вводится один раз здесь, дальше правится вручную во вкладке «Обзор» паспорта. Используется для контроля отклонений («Зоны внимания» на дашборде).
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Расход (₽) <span className="req">*</span></label>
+                <input className="form-input" type="number" value={form.plan_spend} onChange={e => set('plan_spend', e.target.value)} placeholder="140000" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Лиды <span className="req">*</span></label>
+                <input className="form-input" type="number" value={form.plan_leads} onChange={e => set('plan_leads', e.target.value)} placeholder="112" />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Квалы <span className="req">*</span></label>
+                <input className="form-input" type="number" value={form.plan_quals} onChange={e => set('plan_quals', e.target.value)} placeholder="24" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Встречи <span className="req">*</span></label>
+                <input className="form-input" type="number" value={form.plan_meetings} onChange={e => set('plan_meetings', e.target.value)} placeholder="13" />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Сделки <span className="req">*</span></label>
+              <input className="form-input" type="number" value={form.plan_deals} onChange={e => set('plan_deals', e.target.value)} placeholder="2" />
             </div>
           </div>
 
