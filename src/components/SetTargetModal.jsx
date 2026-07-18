@@ -5,15 +5,9 @@ export default function SetTargetModal({ month, existing, onClose, onSaved }) {
   const [form, setForm] = useState({
     plan_spend: existing?.plan_spend || '',
     plan_leads: existing?.plan_leads || '',
-    plan_cpl: existing?.plan_cpl || '',
     plan_quals: existing?.plan_quals || '',
-    plan_cpql: existing?.plan_cpql || '',
-    plan_cr_lq: existing?.plan_cr_lq || '',
     plan_meetings: existing?.plan_meetings || '',
-    plan_cr_qm: existing?.plan_cr_qm || '',
     plan_deals: existing?.plan_deals || '',
-    plan_cac: existing?.plan_cac || '',
-    plan_cr_mo: existing?.plan_cr_mo || '',
   })
   const [loading, setLoading] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -26,15 +20,9 @@ export default function SetTargetModal({ month, existing, onClose, onSaved }) {
       month,
       plan_spend: form.plan_spend ? Number(form.plan_spend) : null,
       plan_leads: form.plan_leads ? Number(form.plan_leads) : null,
-      plan_cpl: form.plan_cpl ? Number(form.plan_cpl) : null,
       plan_quals: form.plan_quals ? Number(form.plan_quals) : null,
-      plan_cpql: form.plan_cpql ? Number(form.plan_cpql) : null,
-      plan_cr_lq: form.plan_cr_lq ? Number(form.plan_cr_lq) : null,
       plan_meetings: form.plan_meetings ? Number(form.plan_meetings) : null,
-      plan_cr_qm: form.plan_cr_qm ? Number(form.plan_cr_qm) : null,
       plan_deals: form.plan_deals ? Number(form.plan_deals) : null,
-      plan_cac: form.plan_cac ? Number(form.plan_cac) : null,
-      plan_cr_mo: form.plan_cr_mo ? Number(form.plan_cr_mo) : null,
     }
 
     if (existing) {
@@ -46,21 +34,15 @@ export default function SetTargetModal({ month, existing, onClose, onSaved }) {
     onSaved()
   }
 
+  // Только 5 базовых метрик (ТЗ раздел 5.1) — плановые значения CPL/CPQL/CAC/CR
+  // на карточках дашборда считаются автоматически из этих пяти, отдельно их
+  // вводить не нужно.
   const fields = [
-    { section: 'Основные метрики' },
     { key: 'plan_spend', label: 'Расход (₽)', placeholder: '140000' },
     { key: 'plan_leads', label: 'Лиды', placeholder: '112' },
-    { key: 'plan_cpl', label: 'Целевой CPL (₽)', placeholder: '1250' },
-    { section: 'Квалификация' },
     { key: 'plan_quals', label: 'Квалы (QL)', placeholder: '24' },
-    { key: 'plan_cpql', label: 'Целевой CPQL (₽)', placeholder: '5882' },
-    { key: 'plan_cr_lq', label: 'CR лид→квал (%)', placeholder: '21.3' },
-    { section: 'Встречи и сделки' },
     { key: 'plan_meetings', label: 'Встречи', placeholder: '13' },
-    { key: 'plan_cr_qm', label: 'CR квал→встреча (%)', placeholder: '52.9' },
     { key: 'plan_deals', label: 'Сделки', placeholder: '2' },
-    { key: 'plan_cac', label: 'Целевой CAC (₽)', placeholder: '63636' },
-    { key: 'plan_cr_mo', label: 'CR встреча→сделка (%)', placeholder: '17.5' },
   ]
 
   return (

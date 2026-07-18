@@ -60,16 +60,9 @@ export function formatDate(str) {
   return new Date(str).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
-// Отчётная неделя Опоры: чт–ср
-// week_start = дата четверга начала отчётной недели
-export function weekStart(date = new Date()) {
-  const d = new Date(date)
-  const day = d.getDay() // 0=вс,1=пн,2=вт,3=ср,4=чт,5=пт,6=сб
-  // Сдвигаем к ближайшему прошедшему четвергу
-  const diff = day >= 4 ? -(day - 4) : -(day + 3)
-  d.setDate(d.getDate() + diff)
-  return d.toISOString().split('T')[0]
-}
+// Отчётная неделя Опоры: чт–ср, в таймзоне Europe/Moscow.
+// Реализация — в dateContext.js (единая точка расчёта дат по всему приложению).
+export { weekStart } from './dateContext.js'
 
 export function currentMonth() {
   const d = new Date()
