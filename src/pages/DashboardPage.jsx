@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { formatMoney } from '../lib/helpers.js'
-import { weekStart as getWeekStart } from '../lib/dateContext.js'
+import { weekStart as getWeekStart, addDaysISO } from '../lib/dateContext.js'
 import SetTargetModal from '../components/SetTargetModal.jsx'
 
 function getISOWeek(date) {
@@ -52,6 +52,8 @@ export default function DashboardPage({ onOpenPassport }) {
   const [availableMonths, setAvailableMonths] = useState([])
   const [loading, setLoading] = useState(true)
   const [showTargetModal, setShowTargetModal] = useState(false)
+  const [frozenRows, setFrozenRows] = useState([])
+  const [freezing, setFreezing] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -85,8 +87,21 @@ export default function DashboardPage({ onOpenPassport }) {
     setTarget(data || null)
   }
 
+  // ТЗ раздел 9: если период заморожен, дашборд читает факт и план из
+  // снапшота, а не пересчитывает их заново из live-данных.
+  async function loadFrozenState() {
+    if (mode === 'week') {
+      const { data } = await supabase.from('weekly_snapshots').select('*').eq('week_start', selectedWeek)
+      setFrozenRows(data || [])
+    } else {
+      const { data } = await supabase.from('monthly_snapshots').select('*').eq('month', selectedMonth)
+      setFrozenRows(data || [])
+    }
+  }
+
   useEffect(() => { load() }, [])
   useEffect(() => { loadTarget() }, [selectedMonth])
+  useEffect(() => { loadFrozenState() }, [mode, selectedWeek, selectedMonth])
 
   function aggregate(rows) {
     const leads = rows.reduce((s, r) => s + (r.leads || 0), 0)
@@ -111,9 +126,111 @@ export default function DashboardPage({ onOpenPassport }) {
     return monthKey(d)
   }
 
-  const periodRows = mode === 'month'
+  const weekRatioForFreeze = 1 / 4.33
+
+  // ТЗ раздел 9: заморозка — ручное действие, фиксирует факты и действовавший
+  // на тот момент план по каждому подрядчику навсегда (пока их не разморозит
+  // админ явно). Пересчёт при повторной заморозке — сначала удаляем старые
+  // строки снапшота за этот период, потом пишем свежие.
+  async function freezeWeek() {
+    if (!window.confirm(`Заморозить неделю ${weekLabel(selectedWeek)}? Данные и план на этот момент станут неизменными.`)) return
+    setFreezing(true)
+    await supabase.from('weekly_snapshots').delete().eq('week_start', selectedWeek)
+    const rows = weeklyStats.filter(r => r.week_start === selectedWeek)
+    const weekEnd = addDaysISO(selectedWeek, 6)
+    const inserts = rows.filter(r => r.contractor_id).map(r => {
+      const t = contractorTargets[r.contractor_id]
+      const leads = r.leads || 0, quals = r.quals || 0, meetings = r.meetings || 0, deals = r.deals || 0
+      const spend = Number(r.spend) || 0
+      const proratePlan = v => (v == null ? null : Math.round(v * weekRatioForFreeze))
+      return {
+        week_start: selectedWeek,
+        week_end: weekEnd,
+        contractor_id: r.contractor_id,
+        contractor_name: r.contractors?.short_name || r.contractors?.name || null,
+        leads, quals, meetings, deals, spend,
+        cpl: leads > 0 ? Math.round(spend / leads) : null,
+        cpql: quals > 0 ? Math.round(spend / quals) : null,
+        cac: deals > 0 ? Math.round(spend / deals) : null,
+        plan_spend: proratePlan(t?.plan_spend),
+        plan_leads: proratePlan(t?.plan_leads),
+        plan_quals: proratePlan(t?.plan_quals),
+        plan_meetings: proratePlan(t?.plan_meetings),
+        plan_deals: proratePlan(t?.plan_deals),
+        frozen_at: new Date().toISOString(),
+      }
+    })
+    if (inserts.length > 0) await supabase.from('weekly_snapshots').insert(inserts)
+    setFreezing(false)
+    loadFrozenState()
+  }
+
+  async function freezeMonth() {
+    if (!window.confirm(`Заморозить ${monthLabel(selectedMonth)}? Данные и план на этот момент станут неизменными.`)) return
+    setFreezing(true)
+    await supabase.from('monthly_snapshots').delete().eq('month', selectedMonth)
+    const rows = weeklyStats.filter(r => r.week_start >= selectedMonth && r.week_start < nextMonth(selectedMonth))
+    const byContractor = {}
+    rows.forEach(r => {
+      if (!r.contractor_id) return
+      if (!byContractor[r.contractor_id]) {
+        byContractor[r.contractor_id] = {
+          contractor_id: r.contractor_id,
+          contractor_name: r.contractors?.short_name || r.contractors?.name || null,
+          leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0,
+        }
+      }
+      const b = byContractor[r.contractor_id]
+      b.leads += r.leads || 0
+      b.quals += r.quals || 0
+      b.meetings += r.meetings || 0
+      b.deals += r.deals || 0
+      b.spend += Number(r.spend) || 0
+    })
+    const inserts = Object.values(byContractor).map(b => {
+      const t = contractorTargets[b.contractor_id]
+      return {
+        month: selectedMonth,
+        contractor_id: b.contractor_id,
+        contractor_name: b.contractor_name,
+        leads: b.leads, quals: b.quals, meetings: b.meetings, deals: b.deals, spend: b.spend,
+        cpl: b.leads > 0 ? Math.round(b.spend / b.leads) : null,
+        cpql: b.quals > 0 ? Math.round(b.spend / b.quals) : null,
+        cac: b.deals > 0 ? Math.round(b.spend / b.deals) : null,
+        plan_spend: t?.plan_spend ?? null,
+        plan_leads: t?.plan_leads ?? null,
+        plan_quals: t?.plan_quals ?? null,
+        plan_meetings: t?.plan_meetings ?? null,
+        plan_deals: t?.plan_deals ?? null,
+        frozen_at: new Date().toISOString(),
+      }
+    })
+    if (inserts.length > 0) await supabase.from('monthly_snapshots').insert(inserts)
+    setFreezing(false)
+    loadFrozenState()
+  }
+
+  async function unfreeze() {
+    if (!window.confirm('Разморозить и пересчитать? Это перезапишет зафиксированную историю периода.')) return
+    setFreezing(true)
+    if (mode === 'week') {
+      await supabase.from('weekly_snapshots').delete().eq('week_start', selectedWeek)
+    } else {
+      await supabase.from('monthly_snapshots').delete().eq('month', selectedMonth)
+    }
+    setFreezing(false)
+    loadFrozenState()
+  }
+
+  const isFrozen = frozenRows.length > 0
+
+  const livePeriodRows = mode === 'month'
     ? weeklyStats.filter(r => r.week_start >= selectedMonth && r.week_start < nextMonth(selectedMonth))
     : weeklyStats.filter(r => r.week_start === selectedWeek)
+
+  // Замороженный период — читаем из weekly_snapshots/monthly_snapshots
+  // (навсегда зафиксированы на момент заморозки), не из live weekly_stats.
+  const periodRows = isFrozen ? frozenRows : livePeriodRows
 
   const fact = aggregate(periodRows)
 
@@ -169,14 +286,19 @@ export default function DashboardPage({ onOpenPassport }) {
   }
 
   function contractorDeviations(contractorId) {
-    const t = contractorTargets[contractorId]
+    const rowsForC = periodRows.filter(r => r.contractor_id === contractorId)
+    if (rowsForC.length === 0) return []
+    // Замороженный период уже несёт план в самом снапшоте (зафиксирован на
+    // момент заморозки, приведён к периоду) — не берём live contractorTargets
+    // и не прораториваем повторно.
+    const t = isFrozen ? rowsForC[0] : contractorTargets[contractorId]
     if (!t) return []
-    const f = aggregate(periodRows.filter(r => r.contractor_id === contractorId))
+    const f = aggregate(rowsForC)
     const issues = []
     for (const key of BASE_PLAN_KEYS) {
       const planRaw = t[`plan_${key}`]
       if (planRaw == null) continue
-      const planPeriod = mode === 'week' ? planRaw * weekRatio : planRaw
+      const planPeriod = isFrozen ? planRaw : (mode === 'week' ? planRaw * weekRatio : planRaw)
       if (!planPeriod) continue
       const factVal = f[key] || 0
       const dev = (factVal - planPeriod) / planPeriod
@@ -233,7 +355,14 @@ export default function DashboardPage({ onOpenPassport }) {
           <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
             ПЛАН / ФАКТ
           </div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>Дашборд за период: {periodLabel}</div>
+          <div style={{ fontSize: 22, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10 }}>
+            Дашборд за период: {periodLabel}
+            {isFrozen && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 20, padding: '3px 10px' }}>
+                🔒 Заморожено
+              </span>
+            )}
+          </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
             Показатели считаются по всем подрядчикам, независимо от статуса
           </div>
@@ -267,6 +396,16 @@ export default function DashboardPage({ onOpenPassport }) {
           {mode === 'month' && (
             <button className="btn btn-secondary btn-sm" onClick={() => setShowTargetModal(true)}>
               {target ? '✏️ Редактировать план' : '+ Задать план'}
+            </button>
+          )}
+
+          {isFrozen ? (
+            <button className="btn btn-secondary btn-sm" onClick={unfreeze} disabled={freezing}>
+              {freezing ? '...' : '🔓 Разморозить и пересчитать'}
+            </button>
+          ) : (
+            <button className="btn btn-secondary btn-sm" onClick={mode === 'week' ? freezeWeek : freezeMonth} disabled={freezing}>
+              {freezing ? '...' : '🔒 Заморозить период'}
             </button>
           )}
         </div>

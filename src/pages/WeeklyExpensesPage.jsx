@@ -27,9 +27,26 @@ export default function WeeklyExpensesPage() {
   const [leadsBySource, setLeadsBySource] = useState({})
   const [existingBySource, setExistingBySource] = useState({})
   const [manualInputs, setManualInputs] = useState({})
+  const [frozenWeeks, setFrozenWeeks] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState(null)
+
+  // ТЗ раздел 3/9: замороженную неделю редактировать нельзя — исключаем её
+  // из выбора и, если по умолчанию выбранная неделя оказалась заморожена,
+  // переключаемся на ближайшую незамороженную.
+  useEffect(() => {
+    supabase.from('weekly_snapshots').select('week_start').then(({ data }) => {
+      const set = new Set((data || []).map(r => r.week_start))
+      setFrozenWeeks(set)
+      if (set.has(selectedWeek)) {
+        const firstOpen = weeks.find(w => !set.has(w))
+        if (firstOpen) setSelectedWeek(firstOpen)
+      }
+    })
+  }, [])
+
+  const selectableWeeks = weeks.filter(w => !frozenWeeks.has(w))
 
   async function load() {
     setLoading(true)
@@ -147,7 +164,7 @@ export default function WeeklyExpensesPage() {
         <div className="info-card-title">Расход за неделю</div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
           <select className="form-select" style={{ maxWidth: 260 }} value={selectedWeek} onChange={e => { setSelectedWeek(e.target.value); setManualInputs({}) }}>
-            {weeks.map(w => <option key={w} value={w}>{formatDate(w)} — {formatDate(addDaysISO(w, 6))}</option>)}
+            {selectableWeeks.map(w => <option key={w} value={w}>{formatDate(w)} — {formatDate(addDaysISO(w, 6))}</option>)}
           </select>
           <input className="form-input" style={{ maxWidth: 220 }} value={enteredBy} onChange={e => setEnteredBy(e.target.value)} placeholder="Кто вносит расход" />
           <button className="btn btn-primary" onClick={saveAll} disabled={saving}>

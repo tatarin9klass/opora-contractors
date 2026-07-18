@@ -14,6 +14,7 @@ export default function ImportPage() {
   const [error, setError] = useState(null)
   const [unmatchedList, setUnmatchedList] = useState([])
   const [contractors, setContractors] = useState([])
+  const [frozenWeeks, setFrozenWeeks] = useState(new Set())
 
   // computeDateContext() пересчитывается не только при монтировании, но и при
   // возврате фокуса на вкладку — чтобы "сегодня" не залипало, если вкладка
@@ -47,6 +48,10 @@ export default function ImportPage() {
   useEffect(() => {
     loadUnmatched()
     supabase.from('contractors').select('id, name, short_name').order('name').then(({ data }) => setContractors(data || []))
+    // ТЗ раздел 3: замороженная неделя выпадает из редактируемого окна импорта.
+    supabase.from('weekly_snapshots').select('week_start').then(({ data }) => {
+      setFrozenWeeks(new Set((data || []).map(r => r.week_start)))
+    })
   }, [])
 
   async function runImport(dateOverride) {
@@ -89,6 +94,11 @@ export default function ImportPage() {
     return `${DAY_NAMES[dateObj.getDay()]} ${formatDate(d)}${isToday ? ' (сегодня)' : ''}${isPrevWeekSection ? ' · прошлая неделя' : ''}`
   }
 
+  // ТЗ раздел 3: как только неделя заморожена — она выпадает из
+  // редактируемого окна импорта, независимо от дня недели.
+  const editableCurrentWeekDays = frozenWeeks.has(ctx.currentWeekThuISO) ? [] : ctx.currentWeekDays
+  const editablePreviousWeekDays = (ctx.previousWeekDays.length > 0 && frozenWeeks.has(ctx.previousWeekDays[0])) ? [] : ctx.previousWeekDays
+
   return (
     <div>
       <div className="info-card" style={{ maxWidth: 760, marginBottom: 16 }}>
@@ -107,13 +117,13 @@ export default function ImportPage() {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
           <select className="form-select" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}>
             <optgroup label="Текущая неделя">
-              {ctx.currentWeekDays.map(d => (
+              {editableCurrentWeekDays.map(d => (
                 <option key={d} value={d}>{dayOptionLabel(d, false)}</option>
               ))}
             </optgroup>
-            {ctx.previousWeekDays.length > 0 && (
+            {editablePreviousWeekDays.length > 0 && (
               <optgroup label="Прошлая неделя (только сегодня, четверг)">
-                {ctx.previousWeekDays.map(d => (
+                {editablePreviousWeekDays.map(d => (
                   <option key={d} value={d}>{dayOptionLabel(d, true)}</option>
                 ))}
               </optgroup>
