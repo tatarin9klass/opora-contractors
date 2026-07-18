@@ -6,7 +6,9 @@ import AddDecisionModal from '../components/AddDecisionModal.jsx'
 import WeeklyFactModal from '../components/WeeklyFactModal.jsx'
 import DeleteContractorModal from '../components/DeleteContractorModal.jsx'
 
-const TABS = ['Обзор', 'Источники и оплата', 'Расход', 'Факт', 'Решения', 'Счета', 'Файлы', 'История']
+// Вкладка «Расход» удалена (ТЗ раздел 8.2) — ввод расхода переехал в отдельный
+// раздел «Ввод расходов» (src/pages/WeeklyExpensesPage.jsx), не в паспорт.
+const TABS = ['Обзор', 'Источники и оплата', 'Факт', 'Решения', 'Счета', 'Файлы', 'История']
 
 const PAYMENT_TYPE_LABELS = {
   'CPL': 'CPL',
@@ -35,8 +37,6 @@ export default function PassportPage({ contractorId, onBack }) {
   const [editingSource, setEditingSource] = useState(null)
   const [showAddSource, setShowAddSource] = useState(false)
   const [newSource, setNewSource] = useState({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '' })
-  const [spendForm, setSpendForm] = useState({ week_start: '', source_id: '', spend: '', entered_by: '', comment: '' })
-  const [spendLoading, setSpendLoading] = useState(false)
   const [editContractor, setEditContractor] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
   const [archiveStatusId, setArchiveStatusId] = useState(null)
@@ -101,49 +101,6 @@ export default function PassportPage({ contractorId, onBack }) {
     setEditingSource(null)
     setShowAddSource(false)
     setNewSource({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '' })
-    load()
-  }
-
-  // Сохранить расход вручную
-  async function saveSpend() {
-    if (!spendForm.week_start || !spendForm.spend || !spendForm.entered_by) {
-      alert('Заполните неделю, расход и кто вносит')
-      return
-    }
-    setSpendLoading(true)
-
-    // Проверим есть ли уже запись за эту неделю для этого источника
-    const sourceId = spendForm.source_id || null
-    const { data: existing } = await supabase
-      .from('weekly_facts')
-      .select('id, spend')
-      .eq('contractor_id', contractorId)
-      .eq('week_start', spendForm.week_start)
-      .eq('source_id', sourceId || '')
-      .maybeSingle()
-
-    if (existing) {
-      // Обновляем только расход
-      await supabase.from('weekly_facts').update({
-        spend: Number(spendForm.spend),
-        entered_by: spendForm.entered_by,
-        comment: spendForm.comment || existing.comment,
-      }).eq('id', existing.id)
-    } else {
-      // Создаём новую запись только с расходом
-      await supabase.from('weekly_facts').insert({
-        contractor_id: contractorId,
-        source_id: sourceId,
-        week_start: spendForm.week_start,
-        spend: Number(spendForm.spend),
-        leads: 0, quals: 0, meetings: 0, deals: 0,
-        entered_by: spendForm.entered_by,
-        comment: spendForm.comment,
-        verify_status: 'введён',
-      })
-    }
-    setSpendLoading(false)
-    setSpendForm({ week_start: '', source_id: '', spend: '', entered_by: '', comment: '' })
     load()
   }
 
@@ -481,79 +438,6 @@ export default function PassportPage({ contractorId, onBack }) {
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* РАСХОД */}
-      {tab === 'Расход' && (
-        <div>
-          <div className="info-card" style={{ marginBottom: 12 }}>
-            <div className="info-card-title">Ввод расхода за неделю</div>
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">Неделя (дата четверга) <span className="req">*</span></label>
-                <input className="form-input" type="date" value={spendForm.week_start} onChange={e => setSpendForm(f => ({ ...f, week_start: e.target.value }))} />
-              </div>
-              {contractor.spend_by_source && sources.length > 0 && (
-                <div className="form-group">
-                  <label className="form-label">Источник</label>
-                  <select className="form-select" value={spendForm.source_id} onChange={e => setSpendForm(f => ({ ...f, source_id: e.target.value }))}>
-                    <option value="">— все источники —</option>
-                    {sources.filter(s => s.status === 'активен').map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-              )}
-            </div>
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">Расход (₽) <span className="req">*</span></label>
-                <input className="form-input" type="number" value={spendForm.spend} onChange={e => setSpendForm(f => ({ ...f, spend: e.target.value }))} placeholder="0" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Кто вносит <span className="req">*</span></label>
-                <input className="form-input" value={spendForm.entered_by} onChange={e => setSpendForm(f => ({ ...f, entered_by: e.target.value }))} placeholder="Имя" />
-              </div>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Комментарий</label>
-              <input className="form-input" value={spendForm.comment} onChange={e => setSpendForm(f => ({ ...f, comment: e.target.value }))} placeholder="Необязательно" />
-            </div>
-            <button className="btn btn-primary" onClick={saveSpend} disabled={spendLoading}>
-              {spendLoading ? 'Сохранение...' : '✓ Сохранить расход'}
-            </button>
-            {!contractor.spend_by_source && (
-              <div className="form-hint" style={{ marginTop: 8 }}>Расход вводится суммарно по подрядчику. Чтобы вводить по источникам — включите флаг в «Основной информации».</div>
-            )}
-          </div>
-
-          {/* История расходов */}
-          <div className="table-wrap">
-            <div className="table-toolbar"><span style={{ fontWeight: 600, fontSize: 13 }}>История расходов</span></div>
-            {facts.filter(f => f.spend > 0).length === 0 ? (
-              <div className="empty-state"><div className="empty-state-icon">💸</div><h3>Расходов нет</h3></div>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Неделя</th>
-                    <th>Источник</th>
-                    <th style={{ textAlign: 'right' }}>Расход</th>
-                    <th>Кто внёс</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {facts.filter(f => f.spend > 0).map(f => (
-                    <tr key={f.id}>
-                      <td style={{ fontWeight: 500 }}>{formatDate(f.week_start)}</td>
-                      <td className="td-muted">{f.sources?.name || 'Суммарно'}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMoney(f.spend)}</td>
-                      <td className="td-muted">{f.entered_by || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             )}
           </div>
         </div>

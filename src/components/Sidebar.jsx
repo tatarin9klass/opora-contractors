@@ -5,6 +5,7 @@ export default function Sidebar({ page, setPage }) {
     { id: 'dashboard', icon: '📊', label: 'Дашборд' },
     { id: 'contractors', icon: '🤝', label: 'Подрядчики' },
     { id: 'import', icon: '📥', label: 'Импорт данных' },
+    { id: 'expenses', icon: '💸', label: 'Ввод расходов' },
   ]
 
   return (

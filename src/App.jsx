@@ -4,11 +4,13 @@ import DashboardPage from './pages/DashboardPage.jsx'
 import ContractorsPage from './pages/ContractorsPage.jsx'
 import PassportPage from './pages/PassportPage.jsx'
 import ImportPage from './pages/ImportPage.jsx'
+import WeeklyExpensesPage from './pages/WeeklyExpensesPage.jsx'
 
 const PAGE_TITLES = {
   dashboard: 'Дашборд',
   contractors: 'Подрядчики',
   import: 'Импорт данных',
+  expenses: 'Ввод расходов',
 }
 
 function ImportPlaceholder() {
@@ -55,6 +57,7 @@ export default function App() {
           {page === 'contractors' && <ContractorsPage onOpenPassport={openPassport} />}
           {page === 'passport' && passportId && <PassportPage contractorId={passportId} onBack={backToList} />}
           {page === 'import' && <ImportPage />}
+          {page === 'expenses' && <WeeklyExpensesPage />}
         </div>
       </div>
     </div>

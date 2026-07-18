@@ -1,0 +1,221 @@
+import React, { useState, useEffect, useMemo } from 'react'
+import { supabase } from '../lib/supabase.js'
+import { formatMoney, formatDate } from '../lib/helpers.js'
+import { todayISO, weekStartOf, addDaysISO } from '../lib/dateContext.js'
+
+// ТЗ раздел 8: только 3 модели оплаты в работе. Фикс и Абонентка — полностью
+// авто, без поля ввода. Абонентка + бюджет — частично вручную (бюджет за
+// неделю) + авто-доля абонентки.
+const AUTO_ONLY = new Set(['Фикс', 'Абонентка'])
+const PARTIAL = 'Абонентка + бюджет'
+
+function weekOptions() {
+  const currentWeekThu = weekStartOf(todayISO())
+  const weeks = []
+  for (let i = 1; i <= 10; i++) {
+    weeks.push(addDaysISO(currentWeekThu, -7 * i))
+  }
+  return weeks
+}
+
+export default function WeeklyExpensesPage() {
+  const weeks = useMemo(weekOptions, [])
+  const [selectedWeek, setSelectedWeek] = useState(weeks[0])
+  const [enteredBy, setEnteredBy] = useState('')
+  const [contractors, setContractors] = useState([])
+  const [sources, setSources] = useState([])
+  const [leadsBySource, setLeadsBySource] = useState({})
+  const [existingBySource, setExistingBySource] = useState({})
+  const [manualInputs, setManualInputs] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState(null)
+
+  async function load() {
+    setLoading(true)
+    const weekEnd = addDaysISO(selectedWeek, 6)
+    const [contractorsRes, sourcesRes, factsRes, expensesRes] = await Promise.all([
+      supabase.from('contractor_mtd').select('*'),
+      supabase.from('sources').select('*, payment_types(name)').eq('status', 'активен').order('created_at'),
+      supabase.from('daily_facts').select('source_id, leads').gte('fact_date', selectedWeek).lte('fact_date', weekEnd),
+      supabase.from('weekly_expenses').select('*').eq('week_start', selectedWeek),
+    ])
+
+    setContractors((contractorsRes.data || []).filter(c => c.is_active))
+    setSources(sourcesRes.data || [])
+
+    const leadsMap = {}
+    ;(factsRes.data || []).forEach(f => {
+      if (!f.source_id) return
+      leadsMap[f.source_id] = (leadsMap[f.source_id] || 0) + (f.leads || 0)
+    })
+    setLeadsBySource(leadsMap)
+
+    const expMap = {}
+    ;(expensesRes.data || []).forEach(e => { expMap[e.source_id] = e })
+    setExistingBySource(expMap)
+
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [selectedWeek])
+
+  // Строки к отображению: по одному источнику на подрядчика (если
+  // spend_by_source=false — только первый активный источник), либо все
+  // активные источники (если spend_by_source=true).
+  const rows = useMemo(() => {
+    const out = []
+    for (const c of contractors) {
+      const contractorSources = sources.filter(s => s.contractor_id === c.contractor_id)
+      if (contractorSources.length === 0) continue
+      const list = c.spend_by_source ? contractorSources : contractorSources.slice(0, 1)
+      list.forEach(s => out.push({ contractor: c, source: s, showSourceName: c.spend_by_source }))
+    }
+    return out
+  }, [contractors, sources])
+
+  function computeRow({ source }) {
+    const paymentName = source.payment_types?.name
+    const leads = leadsBySource[source.id] || 0
+    const retainerWeekly = source.retainer ? (source.retainer / 30.41) * 7 : 0
+    const existing = existingBySource[source.id]
+
+    if (paymentName === 'Фикс') {
+      const total = Math.round((source.cpl_rate || 0) * leads)
+      return { mode: 'auto', total, detail: `${leads} лид. × ${formatMoney(source.cpl_rate || 0)}` }
+    }
+    if (paymentName === 'Абонентка') {
+      const total = Math.round(retainerWeekly)
+      return { mode: 'auto', total, detail: 'абонентка / нед.' }
+    }
+    if (paymentName === PARTIAL) {
+      const autoPortion = Math.round(retainerWeekly)
+      const manualDefault = existing ? Math.max(0, Math.round(existing.spend - autoPortion)) : ''
+      return { mode: 'partial', autoPortion, manualDefault, detail: `+ абонентка ${formatMoney(autoPortion)} / нед.` }
+    }
+    // Модель не задана или устаревшая (CPL/Процент/Смешанная, ТЗ раздел 8.1) — просто ручной ввод
+    return { mode: 'manual', manualDefault: existing ? existing.spend : '', detail: paymentName ? `модель «${paymentName}» — ручной ввод` : 'модель оплаты не задана' }
+  }
+
+  function inputValue(source) {
+    if (manualInputs[source.id] !== undefined) return manualInputs[source.id]
+    const r = computeRow({ source })
+    return r.manualDefault ?? ''
+  }
+
+  function rowTotal(row) {
+    const r = computeRow(row)
+    if (r.mode === 'auto') return r.total
+    const manual = Number(inputValue(row.source) || 0)
+    return r.mode === 'partial' ? manual + r.autoPortion : manual
+  }
+
+  async function saveAll() {
+    if (!enteredBy) { alert('Укажи, кто вносит расход'); return }
+    setSaving(true)
+    for (const row of rows) {
+      const r = computeRow(row)
+      const spend = rowTotal(row)
+      const isAuto = r.mode === 'auto'
+      const existing = existingBySource[row.source.id]
+      const payload = {
+        source_id: row.source.id,
+        contractor_id: row.contractor.contractor_id,
+        week_start: selectedWeek,
+        spend,
+        is_auto_calculated: isAuto,
+        entered_by: enteredBy,
+        updated_at: new Date().toISOString(),
+      }
+      if (existing) {
+        await supabase.from('weekly_expenses').update(payload).eq('id', existing.id)
+      } else {
+        await supabase.from('weekly_expenses').insert(payload)
+      }
+    }
+    setSaving(false)
+    setSavedAt(new Date())
+    setManualInputs({})
+    load()
+  }
+
+  if (loading) return <div className="loading">Загрузка...</div>
+
+  return (
+    <div>
+      <div className="info-card" style={{ marginBottom: 16 }}>
+        <div className="info-card-title">Расход за неделю</div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+          <select className="form-select" style={{ maxWidth: 260 }} value={selectedWeek} onChange={e => { setSelectedWeek(e.target.value); setManualInputs({}) }}>
+            {weeks.map(w => <option key={w} value={w}>{formatDate(w)} — {formatDate(addDaysISO(w, 6))}</option>)}
+          </select>
+          <input className="form-input" style={{ maxWidth: 220 }} value={enteredBy} onChange={e => setEnteredBy(e.target.value)} placeholder="Кто вносит расход" />
+          <button className="btn btn-primary" onClick={saveAll} disabled={saving}>
+            {saving ? 'Сохранение...' : '✓ Сохранить все расходы за неделю'}
+          </button>
+          {savedAt && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Сохранено {savedAt.toLocaleTimeString('ru-RU')}</span>}
+        </div>
+        <div className="form-hint" style={{ marginTop: 8 }}>
+          Фикс и Абонентка считаются автоматически — поле недоступно для редактирования. Для «Абонентка + бюджет» нужно ввести только рекламный бюджет за неделю, доля абонентки прибавится сама.
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        {rows.length === 0 ? (
+          <div className="empty-state"><div className="empty-state-icon">💸</div><h3>Нет активных подрядчиков с источниками</h3></div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Подрядчик</th>
+                <th>Источник</th>
+                <th>Модель</th>
+                <th style={{ textAlign: 'right' }}>Сумма</th>
+                <th>Комментарий</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(row => {
+                const r = computeRow(row)
+                return (
+                  <tr key={row.source.id}>
+                    <td style={{ fontWeight: 500 }}>{row.contractor.short_name || row.contractor.name}</td>
+                    <td className="td-muted">{row.showSourceName ? row.source.name : '— (суммарно)'}</td>
+                    <td className="td-muted">{row.source.payment_types?.name || '—'}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      {r.mode === 'auto' ? (
+                        <span style={{ fontWeight: 600 }}>{formatMoney(r.total)}</span>
+                      ) : r.mode === 'partial' ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                          <input
+                            className="form-input"
+                            type="number"
+                            style={{ width: 110, textAlign: 'right' }}
+                            value={inputValue(row.source)}
+                            onChange={e => setManualInputs(m => ({ ...m, [row.source.id]: e.target.value }))}
+                            placeholder="0"
+                          />
+                          <span style={{ fontWeight: 600 }}>= {formatMoney(rowTotal(row))}</span>
+                        </div>
+                      ) : (
+                        <input
+                          className="form-input"
+                          type="number"
+                          style={{ width: 110, textAlign: 'right', marginLeft: 'auto', display: 'block' }}
+                          value={inputValue(row.source)}
+                          onChange={e => setManualInputs(m => ({ ...m, [row.source.id]: e.target.value }))}
+                          placeholder="0"
+                        />
+                      )}
+                    </td>
+                    <td className="td-muted" style={{ fontSize: 11 }}>{r.detail}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
