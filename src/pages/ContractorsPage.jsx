@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { getStatusClass, cplClass, cpqlClass, formatMoney, formatDate } from '../lib/helpers.js'
+import { weekStart as getWeekStart } from '../lib/dateContext.js'
 import AddContractorModal from '../components/AddContractorModal.jsx'
 
 const STATUS_FILTERS = [
@@ -12,43 +13,69 @@ const STATUS_FILTERS = [
   { label: '⛔ Не брать', value: 'notake' },
 ]
 
-// Столбцы доступные для сортировки: ключ -> поле в данных
-const SORTABLE_COLUMNS = [
-  { key: 'name', label: 'Подрядчик', field: r => (r.short_name || r.name || '').toLowerCase() },
-  { key: 'leads', label: 'Лиды МТД', field: r => r.leads_mtd || 0 },
-  { key: 'spend', label: 'Расход МТД', field: r => r.spend_mtd || 0 },
-  { key: 'cpl', label: 'CPL', field: r => r.cpl_mtd ?? -1 },
-  { key: 'quals', label: 'Квалы', field: r => r.quals_mtd || 0 },
-  { key: 'cpql', label: 'CPQL', field: r => r.cpql_mtd ?? -1 },
-  { key: 'meetings', label: 'Встречи', field: r => r.meetings_mtd || 0 },
-  { key: 'deals', label: 'Сделки', field: r => r.deals_mtd || 0 },
-  { key: 'updated', label: 'Обновлён', field: r => r.updated_at || '' },
-]
+function getISOWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  const dayNum = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+}
 
-// ТЗ раздел 6.2/7: отклонение >20% от личного плана подрядчика — направление
-// зависит от метрики (расход — если выше плана, остальное — если ниже).
+function weekLabel(dateStr) {
+  const d = new Date(dateStr)
+  const isCurrent = dateStr === getWeekStart()
+  return `${getISOWeek(d)} неделя ${d.getFullYear()}${isCurrent ? ' (текущая)' : ''}`
+}
+
+function monthKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`
+}
+
+function monthLabel(dateStr) {
+  return new Date(dateStr).toLocaleString('ru-RU', { month: 'long', year: 'numeric' })
+}
+
+function nextMonth(m) {
+  const d = new Date(m)
+  d.setMonth(d.getMonth() + 1)
+  return monthKey(d)
+}
+
+// ТЗ раздел 6.2/7: отклонение >20% от личного плана подрядчика за выбранный
+// период — направление зависит от метрики (расход — если выше плана,
+// остальное — если ниже). В режиме "неделя" план приводится к неделе тем же
+// коэффициентом, что и на дашборде.
 const DEVIATION_COST_METRICS = new Set(['spend'])
 const DEVIATION_THRESHOLD = 0.2
+const WEEK_RATIO = 1 / 4.33
 
-function hasDeviationAlert(row, target) {
+function hasDeviationAlert(fact, target, mode) {
   if (!target) return false
   const pairs = [
-    ['spend', row.spend_mtd, target.plan_spend],
-    ['leads', row.leads_mtd, target.plan_leads],
-    ['quals', row.quals_mtd, target.plan_quals],
-    ['meetings', row.meetings_mtd, target.plan_meetings],
-    ['deals', row.deals_mtd, target.plan_deals],
+    ['spend', fact.spend, target.plan_spend],
+    ['leads', fact.leads, target.plan_leads],
+    ['quals', fact.quals, target.plan_quals],
+    ['meetings', fact.meetings, target.plan_meetings],
+    ['deals', fact.deals, target.plan_deals],
   ]
-  return pairs.some(([key, fact, plan]) => {
-    if (!plan) return false
-    const dev = ((fact || 0) - plan) / plan
+  return pairs.some(([key, factVal, planRaw]) => {
+    if (planRaw == null) return false
+    const planPeriod = mode === 'week' ? planRaw * WEEK_RATIO : planRaw
+    if (!planPeriod) return false
+    const dev = ((factVal || 0) - planPeriod) / planPeriod
     return DEVIATION_COST_METRICS.has(key) ? dev > DEVIATION_THRESHOLD : dev < -DEVIATION_THRESHOLD
   })
 }
 
 export default function ContractorsPage({ onOpenPassport }) {
+  const [mode, setMode] = useState('week')
+  const [selectedWeek, setSelectedWeek] = useState(getWeekStart())
+  const [selectedMonth, setSelectedMonth] = useState(monthKey())
   const [rows, setRows] = useState([])
   const [targets, setTargets] = useState({})
+  const [weeklyStats, setWeeklyStats] = useState([])
+  const [availableWeeks, setAvailableWeeks] = useState([])
+  const [availableMonths, setAvailableMonths] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -60,14 +87,25 @@ export default function ContractorsPage({ onOpenPassport }) {
 
   async function load() {
     setLoading(true)
-    const [{ data }, { data: targetRows }] = await Promise.all([
+    const [{ data }, { data: targetRows }, { data: statsRows }] = await Promise.all([
       supabase.from('contractor_mtd').select('*'),
       supabase.from('contractor_targets').select('*'),
+      supabase.from('weekly_stats').select('*'),
     ])
     setRows(data || [])
     const targetsMap = {}
     ;(targetRows || []).forEach(t => { targetsMap[t.contractor_id] = t })
     setTargets(targetsMap)
+
+    const stats = statsRows || []
+    setWeeklyStats(stats)
+    const weeks = [...new Set(stats.map(w => w.week_start))].sort((a, b) => b.localeCompare(a))
+    setAvailableWeeks(weeks)
+    const now = new Date()
+    const futureMonths = [0, 1, 2].map(offset => monthKey(new Date(now.getFullYear(), now.getMonth() + offset, 1)))
+    const months = [...new Set([...futureMonths, ...weeks.map(w => monthKey(new Date(w)))])].sort((a, b) => b.localeCompare(a))
+    setAvailableMonths(months)
+
     setLoading(false)
   }
 
@@ -84,6 +122,47 @@ export default function ContractorsPage({ onOpenPassport }) {
       setSortDir(key === 'name' ? 'asc' : 'desc') // числовые по убыванию по умолчанию, имя по алфавиту
     }
   }
+
+  // Факт за выбранный период (неделя/месяц) по каждому подрядчику — из
+  // weekly_stats, тот же источник правды, что и на дашборде.
+  const periodRows = mode === 'month'
+    ? weeklyStats.filter(r => r.week_start >= selectedMonth && r.week_start < nextMonth(selectedMonth))
+    : weeklyStats.filter(r => r.week_start === selectedWeek)
+
+  const periodByContractor = {}
+  periodRows.forEach(r => {
+    if (!r.contractor_id) return
+    if (!periodByContractor[r.contractor_id]) periodByContractor[r.contractor_id] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0 }
+    const a = periodByContractor[r.contractor_id]
+    a.leads += r.leads || 0
+    a.quals += r.quals || 0
+    a.meetings += r.meetings || 0
+    a.deals += r.deals || 0
+    a.spend += Number(r.spend) || 0
+  })
+
+  function periodFact(contractorId) {
+    const a = periodByContractor[contractorId] || { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0 }
+    return {
+      ...a,
+      cpl: a.leads > 0 ? Math.round(a.spend / a.leads) : null,
+      cpql: a.quals > 0 ? Math.round(a.spend / a.quals) : null,
+    }
+  }
+
+  const periodLabel = mode === 'month' ? monthLabel(selectedMonth) : weekLabel(selectedWeek)
+
+  const SORTABLE_COLUMNS = [
+    { key: 'name', label: 'Подрядчик', field: r => (r.short_name || r.name || '').toLowerCase() },
+    { key: 'leads', label: 'Лиды', field: r => periodFact(r.contractor_id).leads },
+    { key: 'spend', label: 'Расход', field: r => periodFact(r.contractor_id).spend },
+    { key: 'cpl', label: 'CPL', field: r => periodFact(r.contractor_id).cpl ?? -1 },
+    { key: 'quals', label: 'Квалы', field: r => periodFact(r.contractor_id).quals },
+    { key: 'cpql', label: 'CPQL', field: r => periodFact(r.contractor_id).cpql ?? -1 },
+    { key: 'meetings', label: 'Встречи', field: r => periodFact(r.contractor_id).meetings },
+    { key: 'deals', label: 'Сделки', field: r => periodFact(r.contractor_id).deals },
+    { key: 'updated', label: 'Обновлён', field: r => r.updated_at || '' },
+  ]
 
   const filtered = rows.filter(r => {
     if (search && !r.name?.toLowerCase().includes(search.toLowerCase()) && !r.short_name?.toLowerCase().includes(search.toLowerCase())) return false
@@ -115,7 +194,7 @@ export default function ContractorsPage({ onOpenPassport }) {
 
   const activeCount = rows.filter(r => r.is_active).length
   const testCount = rows.filter(r => r.status === 'Тест').length
-  const alertCount = rows.filter(r => r.is_active && hasDeviationAlert(r, targets[r.contractor_id])).length
+  const alertCount = rows.filter(r => r.is_active && hasDeviationAlert(periodFact(r.contractor_id), targets[r.contractor_id], mode)).length
 
   function SortIcon({ colKey }) {
     if (sortKey !== colKey) return <span style={{ opacity: 0.25, marginLeft: 4 }}>↕</span>
@@ -124,6 +203,39 @@ export default function ContractorsPage({ onOpenPassport }) {
 
   return (
     <div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
+            Период
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>{periodLabel}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 24, padding: 3 }}>
+            {['month', 'week'].map(m => (
+              <button key={m} onClick={() => setMode(m)} style={{
+                padding: '6px 16px', borderRadius: 20, border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer',
+                background: mode === m ? 'var(--green-dark)' : 'transparent',
+                color: mode === m ? '#fff' : 'var(--text-secondary)',
+                transition: 'all 0.15s'
+              }}>{m === 'month' ? 'Месяц' : 'Неделя'}</button>
+            ))}
+          </div>
+          {mode === 'month' ? (
+            <select className="form-select" style={{ minWidth: 200 }} value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
+              {availableMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+            </select>
+          ) : (
+            <select className="form-select" style={{ minWidth: 200 }} value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}>
+              {availableWeeks.length === 0
+                ? <option value={getWeekStart()}>{weekLabel(getWeekStart())}</option>
+                : availableWeeks.map(w => <option key={w} value={w}>{weekLabel(w)}</option>)
+              }
+            </select>
+          )}
+        </div>
+      </div>
+
       <div className="kpi-row">
         <div className="kpi-card green">
           <div className="kpi-label">Активных</div>
@@ -137,7 +249,7 @@ export default function ContractorsPage({ onOpenPassport }) {
         <div className="kpi-card yellow">
           <div className="kpi-label">Зоны внимания</div>
           <div className="kpi-value">{alertCount}</div>
-          <div className="kpi-sub">отклонение &gt;20% от плана</div>
+          <div className="kpi-sub">отклонение &gt;20% от плана за период</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">Всего подрядчиков</div>
@@ -193,30 +305,33 @@ export default function ContractorsPage({ onOpenPassport }) {
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map(r => (
-                  <tr key={r.contractor_id}>
-                    <td>
-                      <span className="td-name" onClick={() => onOpenPassport(r.contractor_id)}>{r.short_name || r.name}</span>
-                      {hasDeviationAlert(r, targets[r.contractor_id]) && (
-                        <span title="Отклонение >20% от плана" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', marginLeft: 7, verticalAlign: 'middle' }} />
-                      )}
-                    </td>
-                    <td className="td-muted">{r.type || '—'}</td>
-                    <td><span className={`badge ${getStatusClass(r.status)}`}>{r.status}</span></td>
-                    <td style={{ textAlign: 'right' }} className="metric">{r.leads_mtd || 0}</td>
-                    <td style={{ textAlign: 'right' }}>{formatMoney(r.spend_mtd)}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <span className={`metric ${cplClass(r.cpl_mtd)}`}>{r.cpl_mtd ? formatMoney(r.cpl_mtd) : '—'}</span>
-                    </td>
-                    <td style={{ textAlign: 'right' }} className="metric">{r.quals_mtd || 0}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <span className={`metric ${cpqlClass(r.cpql_mtd)}`}>{r.cpql_mtd ? formatMoney(r.cpql_mtd) : '—'}</span>
-                    </td>
-                    <td style={{ textAlign: 'right' }} className="metric">{r.meetings_mtd || 0}</td>
-                    <td style={{ textAlign: 'right' }} className="metric">{r.deals_mtd || 0}</td>
-                    <td className="td-muted" style={{ fontSize: 11 }}>{formatDate(r.updated_at)}</td>
-                  </tr>
-                ))}
+                {sortedRows.map(r => {
+                  const fact = periodFact(r.contractor_id)
+                  return (
+                    <tr key={r.contractor_id}>
+                      <td>
+                        <span className="td-name" onClick={() => onOpenPassport(r.contractor_id)}>{r.short_name || r.name}</span>
+                        {hasDeviationAlert(fact, targets[r.contractor_id], mode) && (
+                          <span title="Отклонение >20% от плана за период" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', marginLeft: 7, verticalAlign: 'middle' }} />
+                        )}
+                      </td>
+                      <td className="td-muted">{r.type || '—'}</td>
+                      <td><span className={`badge ${getStatusClass(r.status)}`}>{r.status}</span></td>
+                      <td style={{ textAlign: 'right' }} className="metric">{fact.leads || 0}</td>
+                      <td style={{ textAlign: 'right' }}>{formatMoney(fact.spend)}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span className={`metric ${cplClass(fact.cpl)}`}>{fact.cpl ? formatMoney(fact.cpl) : '—'}</span>
+                      </td>
+                      <td style={{ textAlign: 'right' }} className="metric">{fact.quals || 0}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span className={`metric ${cpqlClass(fact.cpql)}`}>{fact.cpql ? formatMoney(fact.cpql) : '—'}</span>
+                      </td>
+                      <td style={{ textAlign: 'right' }} className="metric">{fact.meetings || 0}</td>
+                      <td style={{ textAlign: 'right' }} className="metric">{fact.deals || 0}</td>
+                      <td className="td-muted" style={{ fontSize: 11 }}>{formatDate(r.updated_at)}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           )}
