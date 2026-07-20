@@ -77,16 +77,19 @@ export default function WeeklyExpensesPage() {
 
   useEffect(() => { load() }, [selectedWeek])
 
-  // Строки к отображению: по одному источнику на подрядчика (если
-  // spend_by_source=false — только первый активный источник), либо все
-  // активные источники (если spend_by_source=true).
+  // Строки к отображению: все активные источники подрядчика, если
+  // spend_by_source=true ИЛИ у источников разные модели оплаты (авто-расчёт
+  // невозможен без разбивки — у каждой модели своя формула). Иначе — один
+  // суммарный источник (первый активный).
   const rows = useMemo(() => {
     const out = []
     for (const c of contractors) {
       const contractorSources = sources.filter(s => s.contractor_id === c.contractor_id)
       if (contractorSources.length === 0) continue
-      const list = c.spend_by_source ? contractorSources : contractorSources.slice(0, 1)
-      list.forEach(s => out.push({ contractor: c, source: s, showSourceName: c.spend_by_source }))
+      const distinctModels = new Set(contractorSources.map(s => s.payment_types?.name || null))
+      const showAll = c.spend_by_source || distinctModels.size > 1
+      const list = showAll ? contractorSources : contractorSources.slice(0, 1)
+      list.forEach(s => out.push({ contractor: c, source: s, showSourceName: showAll }))
     }
     return out
   }, [contractors, sources])
@@ -127,6 +130,26 @@ export default function WeeklyExpensesPage() {
     return r.mode === 'partial' ? manual + r.autoPortion : manual
   }
 
+  const totalSum = rows.reduce((s, row) => s + rowTotal(row), 0)
+
+  // Группировка по подрядчику — если у подрядчика несколько строк (разные
+  // источники), показываем подзаголовок с названием подрядчика один раз,
+  // а строки под ним — по источникам.
+  const groupedRows = useMemo(() => {
+    const groups = []
+    const byContractor = new Map()
+    for (const row of rows) {
+      const key = row.contractor.contractor_id
+      if (!byContractor.has(key)) {
+        const group = { contractor: row.contractor, items: [] }
+        byContractor.set(key, group)
+        groups.push(group)
+      }
+      byContractor.get(key).items.push(row)
+    }
+    return groups
+  }, [rows])
+
   async function saveAll() {
     if (!enteredBy) { alert('Укажи, кто вносит расход'); return }
     setSaving(true)
@@ -161,7 +184,13 @@ export default function WeeklyExpensesPage() {
   return (
     <div>
       <div className="info-card" style={{ marginBottom: 16 }}>
-        <div className="info-card-title">Расход за неделю</div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div className="info-card-title" style={{ margin: 0 }}>Расход за неделю</div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Итого за неделю</div>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{formatMoney(totalSum)}</div>
+          </div>
+        </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
           <select className="form-select" style={{ maxWidth: 260 }} value={selectedWeek} onChange={e => { setSelectedWeek(e.target.value); setManualInputs({}) }}>
             {selectableWeeks.map(w => <option key={w} value={w}>{formatDate(w)} — {formatDate(addDaysISO(w, 6))}</option>)}
@@ -184,49 +213,64 @@ export default function WeeklyExpensesPage() {
           <table>
             <thead>
               <tr>
-                <th>Подрядчик</th>
-                <th>Источник</th>
+                <th>Подрядчик / источник</th>
                 <th>Модель</th>
                 <th style={{ textAlign: 'right' }}>Сумма</th>
                 <th>Комментарий</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map(row => {
-                const r = computeRow(row)
+              {groupedRows.map(group => {
+                const grouped = group.items.length > 1
                 return (
-                  <tr key={row.source.id}>
-                    <td style={{ fontWeight: 500 }}>{row.contractor.short_name || row.contractor.name}</td>
-                    <td className="td-muted">{row.showSourceName ? row.source.name : '— (суммарно)'}</td>
-                    <td className="td-muted">{row.source.payment_types?.name || '—'}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      {r.mode === 'auto' ? (
-                        <span style={{ fontWeight: 600 }}>{formatMoney(r.total)}</span>
-                      ) : r.mode === 'partial' ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
-                          <input
-                            className="form-input"
-                            type="number"
-                            style={{ width: 110, textAlign: 'right' }}
-                            value={inputValue(row.source)}
-                            onChange={e => setManualInputs(m => ({ ...m, [row.source.id]: e.target.value }))}
-                            placeholder="0"
-                          />
-                          <span style={{ fontWeight: 600 }}>= {formatMoney(rowTotal(row))}</span>
-                        </div>
-                      ) : (
-                        <input
-                          className="form-input"
-                          type="number"
-                          style={{ width: 110, textAlign: 'right', marginLeft: 'auto', display: 'block' }}
-                          value={inputValue(row.source)}
-                          onChange={e => setManualInputs(m => ({ ...m, [row.source.id]: e.target.value }))}
-                          placeholder="0"
-                        />
-                      )}
-                    </td>
-                    <td className="td-muted" style={{ fontSize: 11 }}>{r.detail}</td>
-                  </tr>
+                  <React.Fragment key={group.contractor.contractor_id}>
+                    {grouped && (
+                      <tr>
+                        <td colSpan={4} style={{ padding: '10px 6px 4px', fontWeight: 700, fontSize: 13, borderBottom: 'none' }}>
+                          {group.contractor.short_name || group.contractor.name}
+                          <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 11, marginLeft: 8 }}>разные источники / модели оплаты</span>
+                        </td>
+                      </tr>
+                    )}
+                    {group.items.map(row => {
+                      const r = computeRow(row)
+                      return (
+                        <tr key={row.source.id}>
+                          <td style={{ fontWeight: grouped ? 400 : 500, paddingLeft: grouped ? 22 : undefined }}>
+                            {grouped ? row.source.name : (row.contractor.short_name || row.contractor.name)}
+                          </td>
+                          <td className="td-muted">{row.source.payment_types?.name || '—'}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            {r.mode === 'auto' ? (
+                              <span style={{ fontWeight: 600 }}>{formatMoney(r.total)}</span>
+                            ) : r.mode === 'partial' ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                                <input
+                                  className="form-input"
+                                  type="number"
+                                  style={{ width: 110, textAlign: 'right' }}
+                                  value={inputValue(row.source)}
+                                  onChange={e => setManualInputs(m => ({ ...m, [row.source.id]: e.target.value }))}
+                                  placeholder="0"
+                                />
+                                <span style={{ fontWeight: 600 }}>= {formatMoney(rowTotal(row))}</span>
+                              </div>
+                            ) : (
+                              <input
+                                className="form-input"
+                                type="number"
+                                style={{ width: 110, textAlign: 'right', marginLeft: 'auto', display: 'block' }}
+                                value={inputValue(row.source)}
+                                onChange={e => setManualInputs(m => ({ ...m, [row.source.id]: e.target.value }))}
+                                placeholder="0"
+                              />
+                            )}
+                          </td>
+                          <td className="td-muted" style={{ fontSize: 11 }}>{r.detail}</td>
+                        </tr>
+                      )
+                    })}
+                  </React.Fragment>
                 )
               })}
             </tbody>

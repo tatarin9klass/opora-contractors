@@ -35,6 +35,11 @@ export default function PassportPage({ contractorId, onBack }) {
   const [showDecision, setShowDecision] = useState(false)
   const [showFact, setShowFact] = useState(false)
   const [editingSource, setEditingSource] = useState(null)
+  const [deletingSource, setDeletingSource] = useState(null)
+  const [deleteFactsCount, setDeleteFactsCount] = useState(0)
+  const [deleteAction, setDeleteAction] = useState('delete')
+  const [reassignTargetId, setReassignTargetId] = useState('')
+  const [deletingLoading, setDeletingLoading] = useState(false)
   const [showAddSource, setShowAddSource] = useState(false)
   const [newSource, setNewSource] = useState({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '' })
   const [editContractor, setEditContractor] = useState(false)
@@ -105,6 +110,40 @@ export default function PassportPage({ contractorId, onBack }) {
     setEditingSource(null)
     setShowAddSource(false)
     setNewSource({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '' })
+    load()
+  }
+
+  // Начать удаление источника — сначала смотрим, сколько заявок за ним закреплено
+  async function startDeleteSource(source) {
+    const { count } = await supabase.from('daily_facts').select('id', { count: 'exact', head: true }).eq('source_id', source.id)
+    setDeleteFactsCount(count || 0)
+    setDeletingSource(source)
+    setDeleteAction('delete')
+    setReassignTargetId('')
+  }
+
+  // Подтвердить удаление: заявки либо удаляются вместе с источником, либо
+  // переносятся на другой активный источник этого же подрядчика (contractor_id
+  // не меняется — на дашборде по подрядчику ничего не изменится). Расход,
+  // введённый за удаляемым источником, переносу не подлежит и удаляется вместе с ним.
+  async function confirmDeleteSource() {
+    if (!deletingSource) return
+    if (deleteFactsCount > 0 && deleteAction === 'reassign' && !reassignTargetId) {
+      alert('Выберите источник, на который перенести заявки')
+      return
+    }
+    setDeletingLoading(true)
+    if (deleteFactsCount > 0) {
+      if (deleteAction === 'reassign') {
+        await supabase.from('daily_facts').update({ source_id: reassignTargetId }).eq('source_id', deletingSource.id)
+      } else {
+        await supabase.from('daily_facts').delete().eq('source_id', deletingSource.id)
+      }
+    }
+    await supabase.from('weekly_expenses').delete().eq('source_id', deletingSource.id)
+    await supabase.from('sources').delete().eq('id', deletingSource.id)
+    setDeletingLoading(false)
+    setDeletingSource(null)
     load()
   }
 
@@ -444,6 +483,43 @@ export default function PassportPage({ contractorId, onBack }) {
                   <div key={s.id}>
                     {editingSource?.id === s.id ? (
                       <SourceForm source={editingSource} onSave={saveSource} onCancel={() => setEditingSource(null)} />
+                    ) : deletingSource?.id === s.id ? (
+                      <div style={{ background: '#fdf2f2', border: '1px solid #f5c6c6', borderRadius: 'var(--radius)', padding: 14, marginBottom: 4 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Удалить источник «{s.name}»?</div>
+                        {deleteFactsCount === 0 ? (
+                          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>Заявок за этим источником нет.</div>
+                        ) : (
+                          <div style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                              За этим источником закреплено <strong>{deleteFactsCount}</strong> {deleteFactsCount === 1 ? 'заявка' : 'заявок'}. Что с ними сделать?
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                                <input type="radio" checked={deleteAction === 'delete'} onChange={() => setDeleteAction('delete')} />
+                                Удалить вместе с источником ({deleteFactsCount})
+                              </label>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                                <input type="radio" checked={deleteAction === 'reassign'} onChange={() => setDeleteAction('reassign')} />
+                                Перенести на другой источник этого подрядчика
+                              </label>
+                              {deleteAction === 'reassign' && (
+                                <select className="form-select" style={{ marginLeft: 22, maxWidth: 280 }} value={reassignTargetId} onChange={e => setReassignTargetId(e.target.value)}>
+                                  <option value="">— выберите источник —</option>
+                                  {sources.filter(other => other.id !== s.id).map(other => (
+                                    <option key={other.id} value={other.id}>{other.name}</option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button className="btn btn-danger btn-sm" onClick={confirmDeleteSource} disabled={deletingLoading}>
+                            {deletingLoading ? 'Удаление...' : 'Подтвердить удаление'}
+                          </button>
+                          <button className="btn btn-ghost btn-sm" onClick={() => setDeletingSource(null)}>Отмена</button>
+                        </div>
+                      </div>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border-light)' }}>
                         <div style={{ flex: 1 }}>
@@ -462,6 +538,7 @@ export default function PassportPage({ contractorId, onBack }) {
                           </div>
                         </div>
                         <button className="btn btn-ghost btn-sm" onClick={() => setEditingSource({ ...s, payment_type_id: s.payment_type_id || '' })}>✏️</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => startDeleteSource(s)}>🗑</button>
                       </div>
                     )}
                   </div>
