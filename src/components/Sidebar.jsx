@@ -10,6 +10,7 @@ export default function Sidebar({ page, setPage, isAdmin }) {
       { id: 'import', icon: '📥', label: 'Импорт данных' },
       { id: 'expenses', icon: '💸', label: 'Ввод расходов' },
     ] : []),
+    { id: 'help', icon: '❓', label: 'Инструкция' },
   ]
 
   return (

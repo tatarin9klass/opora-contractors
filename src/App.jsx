@@ -6,6 +6,7 @@ import PassportPage from './pages/PassportPage.jsx'
 import ImportPage from './pages/ImportPage.jsx'
 import WeeklyExpensesPage from './pages/WeeklyExpensesPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
+import HelpPage from './pages/HelpPage.jsx'
 import { AuthProvider, useAuth } from './lib/auth.jsx'
 
 const PAGE_TITLES = {
@@ -13,6 +14,7 @@ const PAGE_TITLES = {
   contractors: 'Подрядчики',
   import: 'Импорт данных',
   expenses: 'Ввод расходов',
+  help: 'Инструкция',
 }
 
 function ImportPlaceholder() {
@@ -81,6 +83,7 @@ function AppShell() {
           {safePage === 'passport' && passportId && <PassportPage contractorId={passportId} onBack={backToList} isAdmin={isAdmin} />}
           {safePage === 'import' && <ImportPage />}
           {safePage === 'expenses' && <WeeklyExpensesPage />}
+          {safePage === 'help' && <HelpPage />}
         </div>
       </div>
     </div>
