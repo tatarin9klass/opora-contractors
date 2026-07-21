@@ -81,6 +81,8 @@ export default function WeeklyExpensesPage() {
   // spend_by_source=true ИЛИ у источников разные модели оплаты (авто-расчёт
   // невозможен без разбивки — у каждой модели своя формула). Иначе — один
   // суммарный источник (первый активный).
+  // Источник без модели оплаты и без лидов за неделю не показываем вообще —
+  // вводить по нему нечего, и он просто загромождает список.
   const rows = useMemo(() => {
     const out = []
     for (const c of contractors) {
@@ -88,11 +90,18 @@ export default function WeeklyExpensesPage() {
       if (contractorSources.length === 0) continue
       const distinctModels = new Set(contractorSources.map(s => s.payment_types?.name || null))
       const showAll = c.spend_by_source || distinctModels.size > 1
-      const list = showAll ? contractorSources : contractorSources.slice(0, 1)
+      let list = showAll ? contractorSources : contractorSources.slice(0, 1)
+      list = list.filter(s => {
+        if (s.payment_types?.name) return true
+        const leads = showAll
+          ? (leadsBySource[s.id] || 0)
+          : contractorSources.reduce((sum, cs) => sum + (leadsBySource[cs.id] || 0), 0)
+        return leads > 0
+      })
       list.forEach(s => out.push({ contractor: c, source: s, showSourceName: showAll }))
     }
     return out
-  }, [contractors, sources])
+  }, [contractors, sources, leadsBySource])
 
   function computeRow({ source }) {
     const paymentName = source.payment_types?.name
