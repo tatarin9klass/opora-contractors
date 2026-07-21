@@ -76,58 +76,50 @@ export default function WeeklyExpensesPage() {
 
   useEffect(() => { load() }, [selectedWeek])
 
-  // Строки к отображению: все активные источники подрядчика, если
-  // spend_by_source=true ИЛИ у источников разные модели оплаты (авто-расчёт
-  // невозможен без разбивки — у каждой модели своя формула). Иначе — один
-  // суммарный источник (первый активный).
-  // Источник без модели оплаты и без лидов за неделю не показываем вообще —
-  // вводить по нему нечего, и он просто загромождает список.
-  // Источники, объединённые в паспорте (expense_group_id) в режиме showAll,
-  // схлопываются в одну строку — row.members содержит >1 источник.
+  // Строки к отображению: ВСЕ активные источники подрядчика, каждый своей
+  // строкой — единственный способ объединить несколько источников в одну
+  // строку теперь явный (expense_group_id, задаётся в паспорте), а не
+  // угадывается по совпадению модели оплаты. Раньше при одинаковой модели
+  // оплаты у всех источников список молча схлопывался до первого источника —
+  // это тихо теряло остальные источники подрядчика (в т.ч. те, что специально
+  // оставили не объединёнными), поэтому убрано.
+  // Источник (или группа) без модели оплаты и без лидов за неделю не
+  // показываем — вводить по нему нечего. Если модель задана — показываем
+  // всегда, даже без лидов за неделю (Абонентка платится независимо от лидов).
   const rows = useMemo(() => {
     const out = []
     for (const c of contractors) {
       const contractorSources = sources.filter(s => s.contractor_id === c.contractor_id)
       if (contractorSources.length === 0) continue
-      const distinctModels = new Set(contractorSources.map(s => s.payment_types?.name || null))
-      const showAll = c.spend_by_source || distinctModels.size > 1
-      const baseList = showAll ? contractorSources : contractorSources.slice(0, 1)
 
-      let items
-      if (showAll) {
-        const groupsSeen = new Set()
-        items = []
-        for (const s of baseList) {
-          if (s.expense_group_id) {
-            if (groupsSeen.has(s.expense_group_id)) continue
-            groupsSeen.add(s.expense_group_id)
-            const members = baseList.filter(m => m.expense_group_id === s.expense_group_id)
-            // Защита: группа валидна только если у всех участников до сих пор
-            // одинаковый payment_type_id (могли поменять после объединения) —
-            // иначе показываем их как отдельные строки, не смешивая формулы.
-            const typesMatch = new Set(members.map(m => m.payment_type_id)).size === 1
-            if (typesMatch && members.length > 1) {
-              items.push({ isGroup: true, members })
-            } else {
-              members.forEach(m => items.push({ isGroup: false, members: [m] }))
-            }
+      const groupsSeen = new Set()
+      let items = []
+      for (const s of contractorSources) {
+        if (s.expense_group_id) {
+          if (groupsSeen.has(s.expense_group_id)) continue
+          groupsSeen.add(s.expense_group_id)
+          const members = contractorSources.filter(m => m.expense_group_id === s.expense_group_id)
+          // Защита: группа валидна только если у всех участников до сих пор
+          // одинаковый payment_type_id (могли поменять после объединения) —
+          // иначе показываем их как отдельные строки, не смешивая формулы.
+          const typesMatch = new Set(members.map(m => m.payment_type_id)).size === 1
+          if (typesMatch && members.length > 1) {
+            items.push({ isGroup: true, members })
           } else {
-            items.push({ isGroup: false, members: [s] })
+            members.forEach(m => items.push({ isGroup: false, members: [m] }))
           }
+        } else {
+          items.push({ isGroup: false, members: [s] })
         }
-      } else {
-        items = baseList.map(s => ({ isGroup: false, members: [s] }))
       }
 
       items = items.filter(item => {
         if (item.members.some(m => m.payment_types?.name)) return true
-        const leads = showAll
-          ? item.members.reduce((sum, m) => sum + (leadsBySource[m.id] || 0), 0)
-          : contractorSources.reduce((sum, cs) => sum + (leadsBySource[cs.id] || 0), 0)
+        const leads = item.members.reduce((sum, m) => sum + (leadsBySource[m.id] || 0), 0)
         return leads > 0
       })
 
-      items.forEach(item => out.push({ contractor: c, ...item, showSourceName: showAll }))
+      items.forEach(item => out.push({ contractor: c, ...item }))
     }
     return out
   }, [contractors, sources, leadsBySource])
