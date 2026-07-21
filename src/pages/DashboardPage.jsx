@@ -67,7 +67,7 @@ function pct(fact, plan) {
   return Math.round((fact / plan) * 100)
 }
 
-export default function DashboardPage({ onOpenPassport }) {
+export default function DashboardPage({ onOpenPassport, isAdmin }) {
   const [mode, setMode] = useState('week')
   const [selectedMonth, setSelectedMonth] = useState(monthKey())
   const [selectedWeek, setSelectedWeek] = useState(getWeekStart())
@@ -466,13 +466,13 @@ export default function DashboardPage({ onOpenPassport }) {
             </select>
           )}
 
-          {mode === 'month' && (
+          {isAdmin && mode === 'month' && (
             <button className="btn btn-secondary btn-sm" onClick={() => setShowTargetModal(true)}>
               {target ? '✏️ Редактировать план' : '+ Задать план'}
             </button>
           )}
 
-          {isFrozen ? (
+          {isAdmin && (isFrozen ? (
             <button className="btn btn-secondary btn-sm" onClick={unfreeze} disabled={freezing}>
               {freezing ? '...' : '🔓 Разморозить и пересчитать'}
             </button>
@@ -480,7 +480,7 @@ export default function DashboardPage({ onOpenPassport }) {
             <button className="btn btn-secondary btn-sm" onClick={mode === 'week' ? freezeWeek : freezeMonth} disabled={freezing}>
               {freezing ? '...' : '🔒 Заморозить период'}
             </button>
-          )}
+          ))}
         </div>
       </div>
 

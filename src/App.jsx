@@ -5,6 +5,8 @@ import ContractorsPage from './pages/ContractorsPage.jsx'
 import PassportPage from './pages/PassportPage.jsx'
 import ImportPage from './pages/ImportPage.jsx'
 import WeeklyExpensesPage from './pages/WeeklyExpensesPage.jsx'
+import LoginPage from './pages/LoginPage.jsx'
+import { AuthProvider, useAuth } from './lib/auth.jsx'
 
 const PAGE_TITLES = {
   dashboard: 'Дашборд',
@@ -26,7 +28,8 @@ function ImportPlaceholder() {
   )
 }
 
-export default function App() {
+function AppShell() {
+  const { session, profile, isAdmin, loading, signOut } = useAuth()
   const [page, setPage] = useState('dashboard')
   const [passportId, setPassportId] = useState(null)
 
@@ -40,26 +43,54 @@ export default function App() {
     setPassportId(null)
   }
 
-  const title = page === 'passport' ? 'Паспорт подрядчика' : PAGE_TITLES[page] || ''
+  if (loading) return <div className="loading">Загрузка...</div>
+  if (!session) return <LoginPage />
+  if (!profile) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Доступ не настроен</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', maxWidth: 320, textAlign: 'center' }}>
+          Вход выполнен, но для этого аккаунта не заведена запись доступа. Обратитесь к администратору.
+        </div>
+        <button className="btn btn-secondary btn-sm" onClick={signOut}>Выйти</button>
+      </div>
+    )
+  }
+
+  // Раздел "Ввод расходов"/"Импорт данных" — write-инструменты без
+  // информационной ценности для роли "просмотр", скрываем их целиком из
+  // навигации, а не разрешаем открыть в disabled-виде.
+  const safePage = !isAdmin && (page === 'import' || page === 'expenses') ? 'dashboard' : page
+  const title = safePage === 'passport' ? 'Паспорт подрядчика' : PAGE_TITLES[safePage] || ''
 
   return (
     <div className="layout">
-      <Sidebar page={page} setPage={p => { setPage(p); setPassportId(null) }} />
+      <Sidebar page={safePage} setPage={p => { setPage(p); setPassportId(null) }} isAdmin={isAdmin} />
       <div className="main">
         <div className="topbar">
           <div className="topbar-title">{title}</div>
-          <div className="topbar-actions">
+          <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>ЮК Опора · Новосибирск</span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{session.user.email}{!isAdmin ? ' · только просмотр' : ''}</span>
+            <button className="btn btn-ghost btn-sm" onClick={signOut}>Выйти</button>
           </div>
         </div>
         <div className="page-content">
-          {page === 'dashboard' && <DashboardPage onOpenPassport={openPassport} />}
-          {page === 'contractors' && <ContractorsPage onOpenPassport={openPassport} />}
-          {page === 'passport' && passportId && <PassportPage contractorId={passportId} onBack={backToList} />}
-          {page === 'import' && <ImportPage />}
-          {page === 'expenses' && <WeeklyExpensesPage />}
+          {safePage === 'dashboard' && <DashboardPage onOpenPassport={openPassport} isAdmin={isAdmin} />}
+          {safePage === 'contractors' && <ContractorsPage onOpenPassport={openPassport} isAdmin={isAdmin} />}
+          {safePage === 'passport' && passportId && <PassportPage contractorId={passportId} onBack={backToList} isAdmin={isAdmin} />}
+          {safePage === 'import' && <ImportPage />}
+          {safePage === 'expenses' && <WeeklyExpensesPage />}
         </div>
       </div>
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
   )
 }

@@ -1,11 +1,15 @@
 import React from 'react'
 
-export default function Sidebar({ page, setPage }) {
+export default function Sidebar({ page, setPage, isAdmin }) {
   const items = [
     { id: 'dashboard', icon: '📊', label: 'Дашборд' },
     { id: 'contractors', icon: '🤝', label: 'Подрядчики' },
-    { id: 'import', icon: '📥', label: 'Импорт данных' },
-    { id: 'expenses', icon: '💸', label: 'Ввод расходов' },
+    // Чисто write-инструменты — не нужны роли "просмотр", у которой всё
+    // равно нет прав ничего туда записать.
+    ...(isAdmin ? [
+      { id: 'import', icon: '📥', label: 'Импорт данных' },
+      { id: 'expenses', icon: '💸', label: 'Ввод расходов' },
+    ] : []),
   ]
 
   return (

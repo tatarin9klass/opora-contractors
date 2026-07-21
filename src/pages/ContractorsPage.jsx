@@ -68,7 +68,7 @@ function hasDeviationAlert(fact, target, mode) {
   })
 }
 
-export default function ContractorsPage({ onOpenPassport }) {
+export default function ContractorsPage({ onOpenPassport, isAdmin }) {
   const [mode, setMode] = useState('week')
   const [selectedWeek, setSelectedWeek] = useState(getWeekStart())
   const [selectedMonth, setSelectedMonth] = useState(monthKey())
@@ -330,9 +330,11 @@ export default function ContractorsPage({ onOpenPassport }) {
             <option value="">Все типы</option>
             {types.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
           </select>
-          <div style={{ marginLeft: 'auto' }}>
-            <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Добавить подрядчика</button>
-          </div>
+          {isAdmin && (
+            <div style={{ marginLeft: 'auto' }}>
+              <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Добавить подрядчика</button>
+            </div>
+          )}
         </div>
 
         <div className="table-scroll">

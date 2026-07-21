@@ -19,7 +19,7 @@ const PAYMENT_TYPE_LABELS = {
   'Смешанная': 'Смешанная',
 }
 
-export default function PassportPage({ contractorId, onBack }) {
+export default function PassportPage({ contractorId, onBack, isAdmin }) {
   const [tab, setTab] = useState('Обзор')
   const [contractor, setContractor] = useState(null)
   const [mtd, setMtd] = useState(null)
@@ -297,11 +297,13 @@ export default function PassportPage({ contractorId, onBack }) {
           </div>
           {contractor.comment && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>{contractor.comment}</div>}
         </div>
-        <div className="passport-actions">
-          <button className="btn btn-secondary btn-sm" onClick={() => setShowDecision(true)}>+ Решение</button>
-          <button className="btn btn-secondary btn-sm" onClick={() => setShowStatus(true)}>Статус →</button>
-          <button className="btn btn-danger btn-sm" onClick={() => setShowDelete(true)}>🗑</button>
-        </div>
+        {isAdmin && (
+          <div className="passport-actions">
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowDecision(true)}>+ Решение</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowStatus(true)}>Статус →</button>
+            <button className="btn btn-danger btn-sm" onClick={() => setShowDelete(true)}>🗑</button>
+          </div>
+        )}
       </div>
 
       {alerts.map((a, i) => (
@@ -339,11 +341,13 @@ export default function PassportPage({ contractorId, onBack }) {
           <div className="info-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <div className="info-card-title" style={{ margin: 0 }}>План подрядчика</div>
-              <button className="btn btn-ghost btn-sm" onClick={() => { setTargetForm(target || {}); setEditTarget(!editTarget) }}>
-                {target ? '✏️ Редактировать' : '+ Задать план'}
-              </button>
+              {isAdmin && (
+                <button className="btn btn-ghost btn-sm" onClick={() => { setTargetForm(target || {}); setEditTarget(!editTarget) }}>
+                  {target ? '✏️ Редактировать' : '+ Задать план'}
+                </button>
+              )}
             </div>
-            {editTarget ? (
+            {editTarget && isAdmin ? (
               <div>
                 <div className="form-row">
                   <div className="form-group"><label className="form-label">Расход (₽)</label><input className="form-input" type="number" value={targetForm.plan_spend || ''} onChange={e => setTargetForm(f => ({ ...f, plan_spend: e.target.value }))} /></div>
@@ -407,9 +411,9 @@ export default function PassportPage({ contractorId, onBack }) {
           <div className="info-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <div className="info-card-title" style={{ margin: 0 }}>Основная информация</div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setEditContractor(!editContractor)}>✏️ Редактировать</button>
+              {isAdmin && <button className="btn btn-ghost btn-sm" onClick={() => setEditContractor(!editContractor)}>✏️ Редактировать</button>}
             </div>
-            {editContractor ? (
+            {editContractor && isAdmin ? (
               <div>
                 <div className="form-group">
                   <label className="form-label">Название</label><input className="form-input" value={contractorForm.name || ''} onChange={e => setContractorForm(f => ({ ...f, name: e.target.value }))} />
@@ -466,10 +470,10 @@ export default function PassportPage({ contractorId, onBack }) {
           <div className="info-card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <div className="info-card-title" style={{ margin: 0 }}>Источники подрядчика</div>
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowAddSource(!showAddSource)}>+ Добавить источник</button>
+              {isAdmin && <button className="btn btn-secondary btn-sm" onClick={() => setShowAddSource(!showAddSource)}>+ Добавить источник</button>}
             </div>
 
-            {showAddSource && (
+            {showAddSource && isAdmin && (
               <SourceForm
                 source={newSource}
                 onSave={saveSource}
@@ -487,9 +491,9 @@ export default function PassportPage({ contractorId, onBack }) {
               <div>
                 {sources.map(s => (
                   <div key={s.id}>
-                    {editingSource?.id === s.id ? (
+                    {editingSource?.id === s.id && isAdmin ? (
                       <SourceForm source={editingSource} onSave={saveSource} onCancel={() => setEditingSource(null)} />
-                    ) : deletingSource?.id === s.id ? (
+                    ) : deletingSource?.id === s.id && isAdmin ? (
                       <div style={{ background: '#fdf2f2', border: '1px solid #f5c6c6', borderRadius: 'var(--radius)', padding: 14, marginBottom: 4 }}>
                         <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Удалить источник «{s.name}»?</div>
                         {deleteFactsCount === 0 ? (
@@ -544,8 +548,12 @@ export default function PassportPage({ contractorId, onBack }) {
                             {s.retainer && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Або: {formatMoney(s.retainer)}</span>}
                           </div>
                         </div>
-                        <button className="btn btn-ghost btn-sm" onClick={() => setEditingSource({ ...s, payment_type_id: s.payment_type_id || '' })}>✏️</button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => startDeleteSource(s)}>🗑</button>
+                        {isAdmin && (
+                          <>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setEditingSource({ ...s, payment_type_id: s.payment_type_id || '' })}>✏️</button>
+                            <button className="btn btn-ghost btn-sm" onClick={() => startDeleteSource(s)}>🗑</button>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -559,9 +567,11 @@ export default function PassportPage({ contractorId, onBack }) {
       {/* РЕШЕНИЯ */}
       {tab === 'Решения' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowDecision(true)}>+ Добавить решение</button>
-          </div>
+          {isAdmin && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+              <button className="btn btn-primary btn-sm" onClick={() => setShowDecision(true)}>+ Добавить решение</button>
+            </div>
+          )}
           {decisions.length === 0 ? (
             <div className="empty-state"><div className="empty-state-icon">📋</div><h3>Решений нет</h3></div>
           ) : (
@@ -587,28 +597,30 @@ export default function PassportPage({ contractorId, onBack }) {
         <div className="info-card">
           <div className="info-card-title">Документы подрядчика</div>
 
-          <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14, marginBottom: 16 }}>
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">Тип документа</label>
-                <select className="form-select" value={uploadFileType} onChange={e => setUploadFileType(e.target.value)}>
-                  <option value="Договор">Договор</option>
-                  <option value="NDA">NDA</option>
-                </select>
+          {isAdmin && (
+            <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14, marginBottom: 16 }}>
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Тип документа</label>
+                  <select className="form-select" value={uploadFileType} onChange={e => setUploadFileType(e.target.value)}>
+                    <option value="Договор">Договор</option>
+                    <option value="NDA">NDA</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Кто загружает <span className="req">*</span></label>
+                  <input className="form-input" value={uploadedByName} onChange={e => setUploadedByName(e.target.value)} placeholder="Имя" />
+                </div>
               </div>
               <div className="form-group">
-                <label className="form-label">Кто загружает <span className="req">*</span></label>
-                <input className="form-input" value={uploadedByName} onChange={e => setUploadedByName(e.target.value)} placeholder="Имя" />
+                <label className="form-label">Файл <span className="req">*</span></label>
+                <input className="form-input" type="file" onChange={e => setSelectedFile(e.target.files?.[0] || null)} />
               </div>
+              <button className="btn btn-primary btn-sm" onClick={uploadFile} disabled={uploading}>
+                {uploading ? 'Загрузка...' : '📤 Загрузить'}
+              </button>
             </div>
-            <div className="form-group">
-              <label className="form-label">Файл <span className="req">*</span></label>
-              <input className="form-input" type="file" onChange={e => setSelectedFile(e.target.files?.[0] || null)} />
-            </div>
-            <button className="btn btn-primary btn-sm" onClick={uploadFile} disabled={uploading}>
-              {uploading ? 'Загрузка...' : '📤 Загрузить'}
-            </button>
-          </div>
+          )}
 
           {files.length === 0 ? (
             <div className="empty-state" style={{ padding: 24 }}>
@@ -636,9 +648,9 @@ export default function PassportPage({ contractorId, onBack }) {
         </div>
       )}
 
-      {showStatus && <ChangeStatusModal contractor={contractor} onClose={() => setShowStatus(false)} onSaved={() => { setShowStatus(false); load() }} />}
-      {showDecision && <AddDecisionModal contractorId={contractorId} onClose={() => setShowDecision(false)} onSaved={() => { setShowDecision(false); load() }} />}
-      {showDelete && <DeleteContractorModal contractor={contractor} archiveStatusId={archiveStatusId} onClose={() => setShowDelete(false)} onDeleted={onBack} onArchived={() => { setShowDelete(false); load() }} />}
+      {isAdmin && showStatus && <ChangeStatusModal contractor={contractor} onClose={() => setShowStatus(false)} onSaved={() => { setShowStatus(false); load() }} />}
+      {isAdmin && showDecision && <AddDecisionModal contractorId={contractorId} onClose={() => setShowDecision(false)} onSaved={() => { setShowDecision(false); load() }} />}
+      {isAdmin && showDelete && <DeleteContractorModal contractor={contractor} archiveStatusId={archiveStatusId} onClose={() => setShowDelete(false)} onDeleted={onBack} onArchived={() => { setShowDelete(false); load() }} />}
     </div>
   )
 }
