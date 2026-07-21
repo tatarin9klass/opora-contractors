@@ -22,12 +22,13 @@ export default function AddContractorModal({ onClose, onSaved }) {
     payment_type_id: '',
     cpl_rate: '',
     retainer: '',
-    // План подрядчика (ТЗ раздел 5.2) — вводится один раз здесь, дальше правится вручную
+    // План подрядчика (ТЗ раздел 5.2) — вводится один раз здесь, дальше правится вручную.
+    // Квалы/встречи/сделки не вводятся напрямую — считаются из лидов и конверсий между этапами.
     plan_spend: '',
     plan_leads: '',
-    plan_quals: '',
-    plan_meetings: '',
-    plan_deals: '',
+    plan_cr_lq: '',
+    plan_cr_qm: '',
+    plan_cr_mo: '',
   })
 
   useEffect(() => {
@@ -48,6 +49,12 @@ export default function AddContractorModal({ onClose, onSaved }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const selectedTypeName = paymentTypes.find(p => String(p.id) === String(form.payment_type_id))?.name
 
+  // Квалы/встречи/сделки плана — не вводятся, а считаются цепочкой конверсий от лидов.
+  const planLeadsNum = Number(form.plan_leads) || 0
+  const planQualsCalc = Math.round(planLeadsNum * (Number(form.plan_cr_lq) || 0) / 100)
+  const planMeetingsCalc = Math.round(planQualsCalc * (Number(form.plan_cr_qm) || 0) / 100)
+  const planDealsCalc = Math.round(planMeetingsCalc * (Number(form.plan_cr_mo) || 0) / 100)
+
   async function handleSave() {
     if (!form.short_name || !form.type_id || !form.status_id || !form.responsible_name) {
       alert('Заполните обязательные поля: название, тип, статус, ответственный')
@@ -59,8 +66,8 @@ export default function AddContractorModal({ onClose, onSaved }) {
     }
     // ТЗ раздел 5.2: план подрядчика обязателен при создании — без него
     // подрядчик не попадёт в контроль отклонений ("Зоны внимания").
-    if (!form.plan_spend || !form.plan_leads || !form.plan_quals || !form.plan_meetings || !form.plan_deals) {
-      alert('Заполните план подрядчика на месяц (все 5 полей обязательны)')
+    if (!form.plan_spend || !form.plan_leads || !form.plan_cr_lq || !form.plan_cr_qm || !form.plan_cr_mo) {
+      alert('Заполните план подрядчика на месяц: расход, лиды и все 3 конверсии')
       return
     }
     setLoading(true)
@@ -91,14 +98,17 @@ export default function AddContractorModal({ onClose, onSaved }) {
       status: 'активен',
     })
 
-    // Создаём план подрядчика
+    // Создаём план подрядчика — квалы/встречи/сделки посчитаны из лидов и конверсий
     const { error: targetError } = await supabase.from('contractor_targets').insert({
       contractor_id: contractor.id,
       plan_spend: Number(form.plan_spend),
-      plan_leads: Number(form.plan_leads),
-      plan_quals: Number(form.plan_quals),
-      plan_meetings: Number(form.plan_meetings),
-      plan_deals: Number(form.plan_deals),
+      plan_leads: planLeadsNum,
+      plan_cr_lq: Number(form.plan_cr_lq),
+      plan_cr_qm: Number(form.plan_cr_qm),
+      plan_cr_mo: Number(form.plan_cr_mo),
+      plan_quals: planQualsCalc,
+      plan_meetings: planMeetingsCalc,
+      plan_deals: planDealsCalc,
       updated_by: form.responsible_name,
     })
     if (targetError) { alert('Подрядчик создан, но план сохранить не удалось: ' + targetError.message) }
@@ -225,17 +235,20 @@ export default function AddContractorModal({ onClose, onSaved }) {
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Квалы <span className="req">*</span></label>
-                <input className="form-input" type="number" value={form.plan_quals} onChange={e => set('plan_quals', e.target.value)} placeholder="24" />
+                <label className="form-label">CR лид → квал (%) <span className="req">*</span></label>
+                <input className="form-input" type="number" value={form.plan_cr_lq} onChange={e => set('plan_cr_lq', e.target.value)} placeholder="20" />
               </div>
               <div className="form-group">
-                <label className="form-label">Встречи <span className="req">*</span></label>
-                <input className="form-input" type="number" value={form.plan_meetings} onChange={e => set('plan_meetings', e.target.value)} placeholder="13" />
+                <label className="form-label">CR квал → встреча (%) <span className="req">*</span></label>
+                <input className="form-input" type="number" value={form.plan_cr_qm} onChange={e => set('plan_cr_qm', e.target.value)} placeholder="55" />
               </div>
             </div>
             <div className="form-group">
-              <label className="form-label">Сделки <span className="req">*</span></label>
-              <input className="form-input" type="number" value={form.plan_deals} onChange={e => set('plan_deals', e.target.value)} placeholder="2" />
+              <label className="form-label">CR встреча → сделка (%) <span className="req">*</span></label>
+              <input className="form-input" type="number" value={form.plan_cr_mo} onChange={e => set('plan_cr_mo', e.target.value)} placeholder="15" />
+            </div>
+            <div className="form-hint" style={{ marginTop: 8 }}>
+              Квалы: <strong>{planQualsCalc}</strong> · Встречи: <strong>{planMeetingsCalc}</strong> · Сделки: <strong>{planDealsCalc}</strong>
             </div>
           </div>
 

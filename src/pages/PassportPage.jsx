@@ -160,20 +160,28 @@ export default function PassportPage({ contractorId, onBack }) {
     load()
   }
 
-  // Сохранить план подрядчика (ТЗ раздел 5.2) — не месячный, правится вручную по мере необходимости
+  // Сохранить план подрядчика (ТЗ раздел 5.2) — не месячный, правится вручную по мере необходимости.
+  // Квалы/встречи/сделки не вводятся напрямую — считаются цепочкой конверсий от лидов.
   async function saveTarget() {
-    if (!targetForm.plan_spend || !targetForm.plan_leads || !targetForm.plan_quals || !targetForm.plan_meetings || !targetForm.plan_deals) {
-      alert('Заполните все 5 полей плана')
+    if (!targetForm.plan_spend || !targetForm.plan_leads || !targetForm.plan_cr_lq || !targetForm.plan_cr_qm || !targetForm.plan_cr_mo) {
+      alert('Заполните расход, лиды и все 3 конверсии')
       return
     }
     setTargetSaving(true)
+    const planLeadsNum = Number(targetForm.plan_leads)
+    const planQualsCalc = Math.round(planLeadsNum * Number(targetForm.plan_cr_lq) / 100)
+    const planMeetingsCalc = Math.round(planQualsCalc * Number(targetForm.plan_cr_qm) / 100)
+    const planDealsCalc = Math.round(planMeetingsCalc * Number(targetForm.plan_cr_mo) / 100)
     const payload = {
       contractor_id: contractorId,
       plan_spend: Number(targetForm.plan_spend),
-      plan_leads: Number(targetForm.plan_leads),
-      plan_quals: Number(targetForm.plan_quals),
-      plan_meetings: Number(targetForm.plan_meetings),
-      plan_deals: Number(targetForm.plan_deals),
+      plan_leads: planLeadsNum,
+      plan_cr_lq: Number(targetForm.plan_cr_lq),
+      plan_cr_qm: Number(targetForm.plan_cr_qm),
+      plan_cr_mo: Number(targetForm.plan_cr_mo),
+      plan_quals: planQualsCalc,
+      plan_meetings: planMeetingsCalc,
+      plan_deals: planDealsCalc,
       updated_at: new Date().toISOString(),
       updated_by: targetForm.updated_by || '',
     }
@@ -342,13 +350,24 @@ export default function PassportPage({ contractorId, onBack }) {
                   <div className="form-group"><label className="form-label">Лиды</label><input className="form-input" type="number" value={targetForm.plan_leads || ''} onChange={e => setTargetForm(f => ({ ...f, plan_leads: e.target.value }))} /></div>
                 </div>
                 <div className="form-row">
-                  <div className="form-group"><label className="form-label">Квалы</label><input className="form-input" type="number" value={targetForm.plan_quals || ''} onChange={e => setTargetForm(f => ({ ...f, plan_quals: e.target.value }))} /></div>
-                  <div className="form-group"><label className="form-label">Встречи</label><input className="form-input" type="number" value={targetForm.plan_meetings || ''} onChange={e => setTargetForm(f => ({ ...f, plan_meetings: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">CR лид → квал (%)</label><input className="form-input" type="number" value={targetForm.plan_cr_lq || ''} onChange={e => setTargetForm(f => ({ ...f, plan_cr_lq: e.target.value }))} placeholder="20" /></div>
+                  <div className="form-group"><label className="form-label">CR квал → встреча (%)</label><input className="form-input" type="number" value={targetForm.plan_cr_qm || ''} onChange={e => setTargetForm(f => ({ ...f, plan_cr_qm: e.target.value }))} placeholder="55" /></div>
                 </div>
                 <div className="form-row">
-                  <div className="form-group"><label className="form-label">Сделки</label><input className="form-input" type="number" value={targetForm.plan_deals || ''} onChange={e => setTargetForm(f => ({ ...f, plan_deals: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">CR встреча → сделка (%)</label><input className="form-input" type="number" value={targetForm.plan_cr_mo || ''} onChange={e => setTargetForm(f => ({ ...f, plan_cr_mo: e.target.value }))} placeholder="15" /></div>
                   <div className="form-group"><label className="form-label">Кто скорректировал</label><input className="form-input" value={targetForm.updated_by || ''} onChange={e => setTargetForm(f => ({ ...f, updated_by: e.target.value }))} placeholder="Имя" /></div>
                 </div>
+                {(() => {
+                  const leadsN = Number(targetForm.plan_leads) || 0
+                  const qualsCalc = Math.round(leadsN * (Number(targetForm.plan_cr_lq) || 0) / 100)
+                  const meetingsCalc = Math.round(qualsCalc * (Number(targetForm.plan_cr_qm) || 0) / 100)
+                  const dealsCalc = Math.round(meetingsCalc * (Number(targetForm.plan_cr_mo) || 0) / 100)
+                  return (
+                    <div className="form-hint" style={{ marginBottom: 8 }}>
+                      Квалы: <strong>{qualsCalc}</strong> · Встречи: <strong>{meetingsCalc}</strong> · Сделки: <strong>{dealsCalc}</strong>
+                    </div>
+                  )
+                })()}
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                   <button className="btn btn-primary btn-sm" onClick={saveTarget} disabled={targetSaving}>{targetSaving ? 'Сохранение...' : 'Сохранить'}</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => setEditTarget(false)}>Отмена</button>
@@ -360,8 +379,11 @@ export default function PassportPage({ contractorId, onBack }) {
                   {[
                     { label: 'Расход', val: formatMoney(target.plan_spend) },
                     { label: 'Лиды', val: target.plan_leads },
+                    { label: 'CR л→кв', val: target.plan_cr_lq != null ? `${target.plan_cr_lq}%` : null },
                     { label: 'Квалы', val: target.plan_quals },
+                    { label: 'CR кв→вс', val: target.plan_cr_qm != null ? `${target.plan_cr_qm}%` : null },
                     { label: 'Встречи', val: target.plan_meetings },
+                    { label: 'CR вс→сд', val: target.plan_cr_mo != null ? `${target.plan_cr_mo}%` : null },
                     { label: 'Сделки', val: target.plan_deals },
                   ].map(item => (
                     <div key={item.label} className="info-item">
