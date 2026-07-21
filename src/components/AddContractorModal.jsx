@@ -22,7 +22,6 @@ export default function AddContractorModal({ onClose, onSaved }) {
     payment_type_id: '',
     cpl_rate: '',
     retainer: '',
-    ad_budget: '',
     // План подрядчика (ТЗ раздел 5.2) — вводится один раз здесь, дальше правится вручную
     plan_spend: '',
     plan_leads: '',
@@ -47,6 +46,7 @@ export default function AddContractorModal({ onClose, onSaved }) {
   }, [])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const selectedTypeName = paymentTypes.find(p => String(p.id) === String(form.payment_type_id))?.name
 
   async function handleSave() {
     if (!form.short_name || !form.type_id || !form.status_id || !form.responsible_name) {
@@ -88,7 +88,6 @@ export default function AddContractorModal({ onClose, onSaved }) {
       payment_type_id: form.payment_type_id ? Number(form.payment_type_id) : null,
       cpl_rate: form.cpl_rate ? Number(form.cpl_rate) : null,
       retainer: form.retainer ? Number(form.retainer) : null,
-      ad_budget: form.ad_budget ? Number(form.ad_budget) : null,
       status: 'активен',
     })
 
@@ -196,21 +195,16 @@ export default function AddContractorModal({ onClose, onSaved }) {
                   {paymentTypes.filter(p => ACTIVE_PAYMENT_TYPES.includes(p.name)).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
-              <div className="form-group">
-                <label className="form-label">Ставка за лид (₽)</label>
-                <input className="form-input" type="number" value={form.cpl_rate} onChange={e => set('cpl_rate', e.target.value)} placeholder="0" />
-                <div className="form-hint">Для модели CPL / фикс за лид</div>
-              </div>
+              {selectedTypeName === 'Фикс' && (
+                <div className="form-group">
+                  <label className="form-label">Ставка CPL (₽)</label>
+                  <input className="form-input" type="number" value={form.cpl_rate} onChange={e => set('cpl_rate', e.target.value)} placeholder="0" />
+                </div>
+              )}
             </div>
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">Абонентка (₽/мес)</label>
-                <input className="form-input" type="number" value={form.retainer} onChange={e => set('retainer', e.target.value)} placeholder="0" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Плановый бюджет (₽/мес)</label>
-                <input className="form-input" type="number" value={form.ad_budget} onChange={e => set('ad_budget', e.target.value)} placeholder="0" />
-              </div>
+            <div className="form-group">
+              <label className="form-label">Абонентка (₽/мес)</label>
+              <input className="form-input" type="number" value={form.retainer} onChange={e => set('retainer', e.target.value)} placeholder="0" />
             </div>
           </div>
 

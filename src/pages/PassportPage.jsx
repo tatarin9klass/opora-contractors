@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
-import { getStatusClass, cplClass, cpqlClass, cacClass, formatMoney, formatDate, metricCardClass, ACTIVE_PAYMENT_TYPES } from '../lib/helpers.js'
+import { getStatusClass, formatMoney, formatDate, metricCardClass, ACTIVE_PAYMENT_TYPES } from '../lib/helpers.js'
 import ChangeStatusModal from '../components/ChangeStatusModal.jsx'
 import AddDecisionModal from '../components/AddDecisionModal.jsx'
-import WeeklyFactModal from '../components/WeeklyFactModal.jsx'
 import DeleteContractorModal from '../components/DeleteContractorModal.jsx'
 
 // Вкладка «Расход» удалена (ТЗ раздел 8.2) — ввод расхода переехал в отдельный
 // раздел «Ввод расходов» (src/pages/WeeklyExpensesPage.jsx), не в паспорт.
-const TABS = ['Обзор', 'Источники и оплата', 'Факт', 'Решения', 'Счета', 'Файлы', 'История']
+// Вкладки «Факт», «Счета», «История» убраны по запросу — упрощение паспорта.
+const TABS = ['Обзор', 'Источники и оплата', 'Решения', 'Файлы']
 
 const PAYMENT_TYPE_LABELS = {
   'CPL': 'CPL',
@@ -25,15 +25,11 @@ export default function PassportPage({ contractorId, onBack }) {
   const [mtd, setMtd] = useState(null)
   const [sources, setSources] = useState([])
   const [paymentTypes, setPaymentTypes] = useState([])
-  const [facts, setFacts] = useState([])
   const [decisions, setDecisions] = useState([])
-  const [statusHistory, setStatusHistory] = useState([])
-  const [invoices, setInvoices] = useState([])
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(true)
   const [showStatus, setShowStatus] = useState(false)
   const [showDecision, setShowDecision] = useState(false)
-  const [showFact, setShowFact] = useState(false)
   const [editingSource, setEditingSource] = useState(null)
   const [deletingSource, setDeletingSource] = useState(null)
   const [deleteFactsCount, setDeleteFactsCount] = useState(0)
@@ -42,7 +38,7 @@ export default function PassportPage({ contractorId, onBack }) {
   const [deletingLoading, setDeletingLoading] = useState(false)
   const [allSources, setAllSources] = useState([])
   const [showAddSource, setShowAddSource] = useState(false)
-  const [newSource, setNewSource] = useState({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '' })
+  const [newSource, setNewSource] = useState({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '' })
   const [editContractor, setEditContractor] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
   const [archiveStatusId, setArchiveStatusId] = useState(null)
@@ -58,14 +54,11 @@ export default function PassportPage({ contractorId, onBack }) {
 
   async function load() {
     setLoading(true)
-    const [c, m, s, f, d, sh, inv, fi, pt, tg] = await Promise.all([
+    const [c, m, s, d, fi, pt, tg] = await Promise.all([
       supabase.from('contractors').select('*, contractor_types(name), contractor_statuses(name, is_active)').eq('id', contractorId).single(),
       supabase.from('contractor_mtd').select('*').eq('contractor_id', contractorId).single(),
       supabase.from('sources').select('*, payment_types(name)').eq('contractor_id', contractorId).order('created_at'),
-      supabase.from('weekly_facts').select('*, sources(name)').eq('contractor_id', contractorId).order('week_start', { ascending: false }).limit(20),
       supabase.from('management_decisions').select('*, decision_types(name)').eq('contractor_id', contractorId).order('decision_date', { ascending: false }),
-      supabase.from('status_history').select('*, old:old_status_id(name), new:new_status_id(name), reason:reason_id(name)').eq('contractor_id', contractorId).order('changed_at', { ascending: false }),
-      supabase.from('invoices').select('*').eq('contractor_id', contractorId).order('created_at', { ascending: false }),
       supabase.from('contractor_files').select('*').eq('contractor_id', contractorId).order('uploaded_at', { ascending: false }),
       supabase.from('payment_types').select('*').order('name'),
       supabase.from('contractor_targets').select('*').eq('contractor_id', contractorId).maybeSingle(),
@@ -74,10 +67,7 @@ export default function PassportPage({ contractorId, onBack }) {
     setContractorForm(c.data || {})
     setMtd(m.data)
     setSources(s.data || [])
-    setFacts(f.data || [])
     setDecisions(d.data || [])
-    setStatusHistory(sh.data || [])
-    setInvoices(inv.data || [])
     setFiles(fi.data || [])
     setPaymentTypes(pt.data || [])
     setTarget(tg.data || null)
@@ -100,7 +90,6 @@ export default function PassportPage({ contractorId, onBack }) {
       payment_type_id: source.payment_type_id ? Number(source.payment_type_id) : null,
       cpl_rate: source.cpl_rate ? Number(source.cpl_rate) : null,
       retainer: source.retainer ? Number(source.retainer) : null,
-      ad_budget: source.ad_budget ? Number(source.ad_budget) : null,
       status: source.status || 'активен',
     }
     if (source.id) {
@@ -110,7 +99,7 @@ export default function PassportPage({ contractorId, onBack }) {
     }
     setEditingSource(null)
     setShowAddSource(false)
-    setNewSource({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '' })
+    setNewSource({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '' })
     load()
   }
 
@@ -163,15 +152,9 @@ export default function PassportPage({ contractorId, onBack }) {
   async function saveContractor() {
     await supabase.from('contractors').update({
       name: contractorForm.name,
-      short_name: contractorForm.short_name,
-      responsible_name: contractorForm.responsible_name,
       contact_name: contractorForm.contact_name,
-      contact_telegram: contractorForm.contact_telegram,
-      contact_phone: contractorForm.contact_phone,
-      contact_email: contractorForm.contact_email,
       working_chat_url: contractorForm.working_chat_url,
       comment: contractorForm.comment,
-      spend_by_source: contractorForm.spend_by_source,
     }).eq('id', contractorId)
     setEditContractor(false)
     load()
@@ -245,6 +228,7 @@ export default function PassportPage({ contractorId, onBack }) {
   function SourceForm({ source, onSave, onCancel }) {
     const [form, setForm] = useState(source)
     const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+    const selectedTypeName = paymentTypes.find(p => String(p.id) === String(form.payment_type_id))?.name
     return (
       <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14, marginBottom: 10 }}>
         <div className="form-row">
@@ -265,12 +249,11 @@ export default function PassportPage({ contractorId, onBack }) {
                 {paymentTypes.filter(p => ACTIVE_PAYMENT_TYPES.includes(p.name)).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
-            <div className="form-group"><label className="form-label">Ставка CPL (₽)</label><input className="form-input" type="number" value={form.cpl_rate || ''} onChange={e => set('cpl_rate', e.target.value)} placeholder="0" /></div>
+            {selectedTypeName === 'Фикс' && (
+              <div className="form-group"><label className="form-label">Ставка CPL (₽)</label><input className="form-input" type="number" value={form.cpl_rate || ''} onChange={e => set('cpl_rate', e.target.value)} placeholder="0" /></div>
+            )}
           </div>
-          <div className="form-row">
-            <div className="form-group"><label className="form-label">Абонентка (₽)</label><input className="form-input" type="number" value={form.retainer || ''} onChange={e => set('retainer', e.target.value)} placeholder="0" /></div>
-            <div className="form-group"><label className="form-label">Рекл. бюджет (₽)</label><input className="form-input" type="number" value={form.ad_budget || ''} onChange={e => set('ad_budget', e.target.value)} placeholder="0" /></div>
-          </div>
+          <div className="form-group"><label className="form-label">Абонентка (₽)</label><input className="form-input" type="number" value={form.retainer || ''} onChange={e => set('retainer', e.target.value)} placeholder="0" /></div>
         </div>
         {form.id && (
           <div className="form-group">
@@ -307,7 +290,6 @@ export default function PassportPage({ contractorId, onBack }) {
           {contractor.comment && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>{contractor.comment}</div>}
         </div>
         <div className="passport-actions">
-          <button className="btn btn-secondary btn-sm" onClick={() => setShowFact(true)}>+ Факт</button>
           <button className="btn btn-secondary btn-sm" onClick={() => setShowDecision(true)}>+ Решение</button>
           <button className="btn btn-secondary btn-sm" onClick={() => setShowStatus(true)}>Статус →</button>
           <button className="btn btn-danger btn-sm" onClick={() => setShowDelete(true)}>🗑</button>
@@ -407,29 +389,16 @@ export default function PassportPage({ contractorId, onBack }) {
             </div>
             {editContractor ? (
               <div>
-                <div className="form-row">
-                  <div className="form-group"><label className="form-label">Название</label><input className="form-input" value={contractorForm.name || ''} onChange={e => setContractorForm(f => ({ ...f, name: e.target.value }))} /></div>
-                  <div className="form-group"><label className="form-label">Краткое название</label><input className="form-input" value={contractorForm.short_name || ''} onChange={e => setContractorForm(f => ({ ...f, short_name: e.target.value }))} /></div>
+                <div className="form-group">
+                  <label className="form-label">Название</label><input className="form-input" value={contractorForm.name || ''} onChange={e => setContractorForm(f => ({ ...f, name: e.target.value }))} />
                 </div>
                 <div className="form-row">
-                  <div className="form-group"><label className="form-label">Ответственный</label><input className="form-input" value={contractorForm.responsible_name || ''} onChange={e => setContractorForm(f => ({ ...f, responsible_name: e.target.value }))} /></div>
                   <div className="form-group"><label className="form-label">Контакт</label><input className="form-input" value={contractorForm.contact_name || ''} onChange={e => setContractorForm(f => ({ ...f, contact_name: e.target.value }))} /></div>
-                </div>
-                <div className="form-row">
-                  <div className="form-group"><label className="form-label">Telegram</label><input className="form-input" value={contractorForm.contact_telegram || ''} onChange={e => setContractorForm(f => ({ ...f, contact_telegram: e.target.value }))} /></div>
-                  <div className="form-group"><label className="form-label">Телефон</label><input className="form-input" value={contractorForm.contact_phone || ''} onChange={e => setContractorForm(f => ({ ...f, contact_phone: e.target.value }))} /></div>
-                </div>
-                <div className="form-row">
-                  <div className="form-group"><label className="form-label">Email</label><input className="form-input" value={contractorForm.contact_email || ''} onChange={e => setContractorForm(f => ({ ...f, contact_email: e.target.value }))} /></div>
                   <div className="form-group"><label className="form-label">Рабочий чат (ссылка)</label><input className="form-input" value={contractorForm.working_chat_url || ''} onChange={e => setContractorForm(f => ({ ...f, working_chat_url: e.target.value }))} /></div>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Комментарий</label>
                   <textarea className="form-textarea" value={contractorForm.comment || ''} onChange={e => setContractorForm(f => ({ ...f, comment: e.target.value }))} rows={2} />
-                </div>
-                <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input type="checkbox" id="spend_by_source" checked={contractorForm.spend_by_source || false} onChange={e => setContractorForm(f => ({ ...f, spend_by_source: e.target.checked }))} />
-                  <label htmlFor="spend_by_source" style={{ fontSize: 13, cursor: 'pointer' }}>Вводить расход по источникам отдельно</label>
                 </div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                   <button className="btn btn-primary btn-sm" onClick={saveContractor}>Сохранить</button>
@@ -440,10 +409,7 @@ export default function PassportPage({ contractorId, onBack }) {
               <div className="info-grid">
                 {[
                   { label: 'Контакт', val: contractor.contact_name },
-                  { label: 'Telegram', val: contractor.contact_telegram },
-                  { label: 'Телефон', val: contractor.contact_phone },
-                  { label: 'Email', val: contractor.contact_email },
-                  { label: 'Ответственный', val: contractor.responsible_name },
+                  { label: 'Рабочий чат', val: contractor.working_chat_url },
                   { label: 'Добавлен', val: formatDate(contractor.created_at) },
                 ].map(item => (
                   <div key={item.label} className="info-item">
@@ -554,7 +520,6 @@ export default function PassportPage({ contractorId, onBack }) {
                             {s.landing_url && <a href={s.landing_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--green-primary)' }}>🔗 ссылка ↗</a>}
                             {s.cpl_rate && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>CPL: {formatMoney(s.cpl_rate)}</span>}
                             {s.retainer && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Або: {formatMoney(s.retainer)}</span>}
-                            {s.ad_budget && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Бюджет: {formatMoney(s.ad_budget)}</span>}
                           </div>
                         </div>
                         <button className="btn btn-ghost btn-sm" onClick={() => setEditingSource({ ...s, payment_type_id: s.payment_type_id || '' })}>✏️</button>
@@ -564,57 +529,6 @@ export default function PassportPage({ contractorId, onBack }) {
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ФАКТ */}
-      {tab === 'Факт' && (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowFact(true)}>+ Добавить неделю</button>
-          </div>
-          <div className="table-wrap">
-            {facts.length === 0 ? (
-              <div className="empty-state"><div className="empty-state-icon">📅</div><h3>Нет данных</h3><p>Данные появятся после загрузки выгрузки из Битрикса</p></div>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Неделя</th>
-                    <th>Источник</th>
-                    <th style={{ textAlign: 'right' }}>Лиды</th>
-                    <th style={{ textAlign: 'right' }}>Расход</th>
-                    <th style={{ textAlign: 'right' }}>CPL</th>
-                    <th style={{ textAlign: 'right' }}>Квалы</th>
-                    <th style={{ textAlign: 'right' }}>CPQL</th>
-                    <th style={{ textAlign: 'right' }}>Встречи</th>
-                    <th style={{ textAlign: 'right' }}>Сделки</th>
-                    <th>Статус</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {facts.map(f => {
-                    const cpl = f.leads > 0 ? Math.round(f.spend / f.leads) : null
-                    const cpql = f.quals > 0 ? Math.round(f.spend / f.quals) : null
-                    return (
-                      <tr key={f.id}>
-                        <td style={{ fontWeight: 500 }}>{formatDate(f.week_start)}</td>
-                        <td className="td-muted">{f.sources?.name || '—'}</td>
-                        <td style={{ textAlign: 'right' }}>{f.leads}</td>
-                        <td style={{ textAlign: 'right' }}>{formatMoney(f.spend)}</td>
-                        <td style={{ textAlign: 'right' }}><span className={`metric ${cplClass(cpl)}`}>{cpl ? formatMoney(cpl) : '—'}</span></td>
-                        <td style={{ textAlign: 'right' }}>{f.quals}</td>
-                        <td style={{ textAlign: 'right' }}><span className={`metric ${cpqlClass(cpql)}`}>{cpql ? formatMoney(cpql) : '—'}</span></td>
-                        <td style={{ textAlign: 'right' }}>{f.meetings}</td>
-                        <td style={{ textAlign: 'right' }}>{f.deals}</td>
-                        <td><span className={`badge ${f.verify_status === 'проверен' ? 'badge-active' : f.verify_status === 'отклонён' ? 'badge-off' : 'badge-new'}`}>{f.verify_status}</span></td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
             )}
           </div>
         </div>
@@ -641,51 +555,6 @@ export default function PassportPage({ contractorId, onBack }) {
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* СЧЕТА */}
-      {tab === 'Счета' && (
-        <div>
-          <div className="info-card" style={{ marginBottom: 12 }}>
-            <div className="info-card-title">Оплаченные счета</div>
-            <div className="alert alert-info">
-              ℹ️ Счета загружаются раз в месяц. Формат имени файла: <code>Подрядчик_НаЧто_Направление_Сумма</code>
-            </div>
-            <div style={{ marginTop: 12, color: 'var(--text-muted)', fontSize: 13 }}>
-              Загрузка счетов будет доступна в разделе «Счета» (общий раздел). Здесь отображаются счета привязанные к этому подрядчику.
-            </div>
-          </div>
-          {invoices.length === 0 ? (
-            <div className="empty-state"><div className="empty-state-icon">🧾</div><h3>Счетов нет</h3><p>Счета появятся после загрузки в общем разделе</p></div>
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Файл</th>
-                    <th>Назначение</th>
-                    <th>Направление</th>
-                    <th style={{ textAlign: 'right' }}>Сумма</th>
-                    <th>Месяц</th>
-                    <th>Статус</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoices.map(inv => (
-                    <tr key={inv.id}>
-                      <td style={{ fontSize: 12 }}>{inv.file_name}</td>
-                      <td className="td-muted">{inv.parsed_purpose || '—'}</td>
-                      <td className="td-muted">{inv.parsed_direction || '—'}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMoney(inv.parsed_amount)}</td>
-                      <td className="td-muted">{inv.month ? new Date(inv.month).toLocaleString('ru-RU', { month: 'long', year: 'numeric' }) : '—'}</td>
-                      <td><span className={`badge ${inv.status === 'ok' ? 'badge-active' : inv.status === 'not_found' ? 'badge-off' : 'badge-new'}`}>{inv.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
           )}
         </div>
@@ -745,32 +614,8 @@ export default function PassportPage({ contractorId, onBack }) {
         </div>
       )}
 
-      {/* ИСТОРИЯ */}
-      {tab === 'История' && (
-        <div>
-          {statusHistory.length === 0 ? (
-            <div className="empty-state"><div className="empty-state-icon">🕓</div><h3>История пуста</h3></div>
-          ) : (
-            <div className="timeline">
-              {statusHistory.map(h => (
-                <div key={h.id} className="timeline-item">
-                  <div className="timeline-icon">🔄</div>
-                  <div className="timeline-content">
-                    <div className="timeline-title">{h.old?.name || '—'} → {h.new?.name || '—'}</div>
-                    <div className="timeline-meta">{h.changed_by} · {formatDate(h.changed_at)}</div>
-                    {h.reason?.name && <div className="timeline-body">Причина: {h.reason.name}</div>}
-                    {h.comment && <div className="timeline-body">{h.comment}</div>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       {showStatus && <ChangeStatusModal contractor={contractor} onClose={() => setShowStatus(false)} onSaved={() => { setShowStatus(false); load() }} />}
       {showDecision && <AddDecisionModal contractorId={contractorId} onClose={() => setShowDecision(false)} onSaved={() => { setShowDecision(false); load() }} />}
-      {showFact && <WeeklyFactModal contractorId={contractorId} contractorName={contractor.short_name || contractor.name} onClose={() => setShowFact(false)} onSaved={() => { setShowFact(false); load() }} />}
       {showDelete && <DeleteContractorModal contractor={contractor} archiveStatusId={archiveStatusId} onClose={() => setShowDelete(false)} onDeleted={onBack} onArchived={() => { setShowDelete(false); load() }} />}
     </div>
   )
