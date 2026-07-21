@@ -8,6 +8,7 @@ export default function SetTargetModal({ month, existing, onClose, onSaved }) {
     plan_quals: existing?.plan_quals || '',
     plan_meetings: existing?.plan_meetings || '',
     plan_deals: existing?.plan_deals || '',
+    plan_revenue: existing?.plan_revenue || '',
   })
   const [loading, setLoading] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -23,6 +24,7 @@ export default function SetTargetModal({ month, existing, onClose, onSaved }) {
       plan_quals: form.plan_quals ? Number(form.plan_quals) : null,
       plan_meetings: form.plan_meetings ? Number(form.plan_meetings) : null,
       plan_deals: form.plan_deals ? Number(form.plan_deals) : null,
+      plan_revenue: form.plan_revenue ? Number(form.plan_revenue) : null,
     }
 
     if (existing) {
@@ -34,15 +36,18 @@ export default function SetTargetModal({ month, existing, onClose, onSaved }) {
     onSaved()
   }
 
-  // Только 5 базовых метрик (ТЗ раздел 5.1) — плановые значения CPL/CPQL/CAC/CR
+  // 5 базовых метрик (ТЗ раздел 5.1) — плановые значения CPL/CPQL/CAC/CR/CPM
   // на карточках дашборда считаются автоматически из этих пяти, отдельно их
-  // вводить не нужно.
+  // вводить не нужно. Revenue — исключение: средний чек сделки нельзя вывести
+  // из этих пяти, поэтому вводится вручную; AOV (Revenue/CAC) при этом
+  // остаётся полностью вычисляемым.
   const fields = [
     { key: 'plan_spend', label: 'Расход (₽)', placeholder: '140000' },
     { key: 'plan_leads', label: 'Лиды', placeholder: '112' },
     { key: 'plan_quals', label: 'Квалы (QL)', placeholder: '24' },
     { key: 'plan_meetings', label: 'Встречи', placeholder: '13' },
     { key: 'plan_deals', label: 'Сделки', placeholder: '2' },
+    { key: 'plan_revenue', label: 'Revenue (₽)', placeholder: '4000000' },
   ]
 
   return (

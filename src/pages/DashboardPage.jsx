@@ -264,16 +264,28 @@ export default function DashboardPage({ onOpenPassport }) {
     const quals = basePlanVal('quals')
     const meetings = basePlanVal('meetings')
     const deals = basePlanVal('deals')
+    const cac = deals > 0 ? Math.round(spend / deals) : null
     if (key === 'cpl') return leads > 0 ? Math.round(spend / leads) : null
     if (key === 'cpql') return quals > 0 ? Math.round(spend / quals) : null
-    if (key === 'cac') return deals > 0 ? Math.round(spend / deals) : null
+    if (key === 'cac') return cac
     if (key === 'cpm') return meetings > 0 ? Math.round(spend / meetings) : null
     if (key === 'cr_lq') return leads > 0 ? Math.round((quals / leads) * 1000) / 10 : null
     if (key === 'cr_qm') return quals > 0 ? Math.round((meetings / quals) * 1000) / 10 : null
     if (key === 'cr_mo') return meetings > 0 ? Math.round((deals / meetings) * 1000) / 10 : null
     if (key === 'cr_lo') return leads > 0 ? Math.round((deals / leads) * 1000) / 10 : null
-    // Revenue/AOV — плана нет: нет способа прогнозировать средний чек сделки
-    // из 5 базовых плановых метрик (spend/leads/quals/meetings/deals).
+    // Revenue — единственная производная метрика без формулы из базовых 5:
+    // средний чек сделки не вывести из spend/leads/quals/meetings/deals,
+    // поэтому план revenue вводится отдельно (monthly_targets.plan_revenue).
+    if (key === 'revenue') {
+      if (!target || target.plan_revenue == null) return null
+      const v = mode === 'week' ? target.plan_revenue * weekRatio : target.plan_revenue
+      return Math.round(v)
+    }
+    if (key === 'aov') {
+      if (!target || target.plan_revenue == null || !cac) return null
+      const revenuePlan = mode === 'week' ? target.plan_revenue * weekRatio : target.plan_revenue
+      return Math.round(revenuePlan / cac)
+    }
     return null
   }
 
