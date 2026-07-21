@@ -121,7 +121,7 @@ export default function DashboardPage({ onOpenPassport }) {
       cr_qm: quals > 0 ? Math.round((meetings / quals) * 1000) / 10 : null,
       cr_mo: meetings > 0 ? Math.round((deals / meetings) * 1000) / 10 : null,
       cr_lo: leads > 0 ? Math.round((deals / leads) * 1000) / 10 : null,
-      aov: cac ? Math.round(revenue / cac) : null,
+      aov: deals > 0 ? Math.round(revenue / deals) : null,
     }
   }
 
@@ -282,9 +282,9 @@ export default function DashboardPage({ onOpenPassport }) {
       return Math.round(v)
     }
     if (key === 'aov') {
-      if (!target || target.plan_revenue == null || !cac) return null
+      if (!target || target.plan_revenue == null || !deals) return null
       const revenuePlan = mode === 'week' ? target.plan_revenue * weekRatio : target.plan_revenue
-      return Math.round(revenuePlan / cac)
+      return Math.round(revenuePlan / deals)
     }
     return null
   }

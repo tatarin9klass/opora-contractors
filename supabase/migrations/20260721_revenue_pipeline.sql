@@ -1,5 +1,5 @@
 -- Дашборд «Дополнительные показатели»: добавляем Revenue (сумма сделок за период)
--- и AOV (revenue / CAC). Revenue считается по факту оплаты сделки (тот же день,
+-- и AOV (revenue / количество сделок). Revenue считается по факту оплаты сделки (тот же день,
 -- что уже используется для deals — DEAL_PAID_DATE_FIELD в bitrix-import), сумма
 -- берётся из поля сделки OPPORTUNITY.
 alter table daily_facts add column if not exists revenue numeric not null default 0;
