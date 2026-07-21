@@ -51,6 +51,9 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
   const [uploadedByName, setUploadedByName] = useState('')
   const [selectedFile, setSelectedFile] = useState(null)
   const [uploading, setUploading] = useState(false)
+  const [groupSelecting, setGroupSelecting] = useState(false)
+  const [groupPicks, setGroupPicks] = useState([])
+  const [groupSaving, setGroupSaving] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -148,6 +151,31 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
     load()
   }
 
+  // Объединение источников для расхода (не путать с удалением/переносом
+  // заявок выше) — несколько источников с ОДИНАКОВЫМ типом оплаты можно
+  // объединить в одну строку на странице "Ввод расходов". expense_group_id —
+  // просто общий сгенерированный uuid у всех участников группы.
+  function toggleGroupPick(sourceId) {
+    setGroupPicks(picks => picks.includes(sourceId) ? picks.filter(id => id !== sourceId) : [...picks, sourceId])
+  }
+
+  async function confirmGroup() {
+    if (groupPicks.length < 2) return
+    setGroupSaving(true)
+    const groupId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    await supabase.from('sources').update({ expense_group_id: groupId }).in('id', groupPicks)
+    setGroupSaving(false)
+    setGroupPicks([])
+    setGroupSelecting(false)
+    load()
+  }
+
+  async function ungroupSources(groupId) {
+    if (!window.confirm('Разгруппировать источники? Расход по ним снова нужно будет вводить отдельно.')) return
+    await supabase.from('sources').update({ expense_group_id: null }).eq('expense_group_id', groupId).eq('contractor_id', contractorId)
+    load()
+  }
+
   // Сохранить изменения подрядчика
   async function saveContractor() {
     await supabase.from('contractors').update({
@@ -231,6 +259,12 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
   if (mtd?.cpl_mtd > 1500) alerts.push({ type: 'danger', text: `CPL ${Math.round(mtd.cpl_mtd).toLocaleString('ru-RU')} ₽ — превышен порог (1 500 ₽)` })
   else if (mtd?.cpl_mtd > 1200) alerts.push({ type: 'warning', text: `CPL ${Math.round(mtd.cpl_mtd).toLocaleString('ru-RU')} ₽ — в жёлтой зоне` })
   if (mtd?.spend_mtd > 0 && mtd?.leads_mtd === 0) alerts.push({ type: 'danger', text: 'Есть расход, но нет лидов — аномалия' })
+
+  // Источники, выбранные для объединения, должны быть с одинаковым типом
+  // оплаты — иначе авто-расчёт расхода по разным формулам смешается в одну строку.
+  const groupPickSources = sources.filter(s => groupPicks.includes(s.id))
+  const groupPickTypeId = groupPickSources[0]?.payment_type_id ?? null
+  const groupPickValid = groupPicks.length >= 2 && groupPickSources.every(s => s.payment_type_id && s.payment_type_id === groupPickTypeId)
 
   // Форма редактирования источника
   function SourceForm({ source, onSave, onCancel }) {
@@ -470,8 +504,34 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
           <div className="info-card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <div className="info-card-title" style={{ margin: 0 }}>Источники подрядчика</div>
-              {isAdmin && <button className="btn btn-secondary btn-sm" onClick={() => setShowAddSource(!showAddSource)}>+ Добавить источник</button>}
+              {isAdmin && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => { setGroupSelecting(g => !g); setGroupPicks([]) }}
+                  >
+                    {groupSelecting ? 'Отмена' : '🔗 Объединить для расхода'}
+                  </button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setShowAddSource(!showAddSource)}>+ Добавить источник</button>
+                </div>
+              )}
             </div>
+
+            {groupSelecting && (
+              <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 12, marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                  Отметь 2 и более источника с одинаковым типом оплаты — на странице «Ввод расходов» они схлопнутся в одну строку.
+                </div>
+                {groupPicks.length > 0 && !groupPickValid && (
+                  <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 6 }}>
+                    Выбранные источники должны быть с одинаковым типом оплаты (и он должен быть задан).
+                  </div>
+                )}
+                <button className="btn btn-primary btn-sm" onClick={confirmGroup} disabled={!groupPickValid || groupSaving}>
+                  {groupSaving ? 'Сохранение...' : `Объединить (${groupPicks.length})`}
+                </button>
+              </div>
+            )}
 
             {showAddSource && isAdmin && (
               <SourceForm
@@ -534,11 +594,22 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
                       </div>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border-light)' }}>
+                        {groupSelecting && (
+                          <input
+                            type="checkbox"
+                            style={{ marginTop: 3 }}
+                            checked={groupPicks.includes(s.id)}
+                            disabled={!!s.expense_group_id || !s.payment_type_id || (groupPickTypeId != null && s.payment_type_id !== groupPickTypeId)}
+                            onChange={() => toggleGroupPick(s.id)}
+                            title={s.expense_group_id ? 'Уже в группе — сначала разгруппируйте' : (!s.payment_type_id ? 'Нужен заданный тип оплаты' : '')}
+                          />
+                        )}
                         <div style={{ flex: 1 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                             <span style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</span>
                             <span className={`badge ${s.status === 'активен' ? 'badge-active' : 'badge-pause'}`}>{s.status}</span>
                             {s.payment_types?.name && <span className="badge badge-test">{s.payment_types.name}</span>}
+                            {s.expense_group_id && <span className="badge badge-control">🔗 объединено для расхода</span>}
                           </div>
                           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                             {s.roistat_marker && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>🏷 <code style={{ background: 'var(--bg)', padding: '1px 4px', borderRadius: 3 }}>{s.roistat_marker}</code></span>}
@@ -548,6 +619,9 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
                             {s.retainer && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Або: {formatMoney(s.retainer)}</span>}
                           </div>
                         </div>
+                        {isAdmin && s.expense_group_id && (
+                          <button className="btn btn-ghost btn-sm" onClick={() => ungroupSources(s.expense_group_id)}>Разгруппировать</button>
+                        )}
                         {isAdmin && (
                           <>
                             <button className="btn btn-ghost btn-sm" onClick={() => setEditingSource({ ...s, payment_type_id: s.payment_type_id || '' })}>✏️</button>

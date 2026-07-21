@@ -82,6 +82,8 @@ export default function WeeklyExpensesPage() {
   // суммарный источник (первый активный).
   // Источник без модели оплаты и без лидов за неделю не показываем вообще —
   // вводить по нему нечего, и он просто загромождает список.
+  // Источники, объединённые в паспорте (expense_group_id) в режиме showAll,
+  // схлопываются в одну строку — row.members содержит >1 источник.
   const rows = useMemo(() => {
     const out = []
     for (const c of contractors) {
@@ -89,28 +91,62 @@ export default function WeeklyExpensesPage() {
       if (contractorSources.length === 0) continue
       const distinctModels = new Set(contractorSources.map(s => s.payment_types?.name || null))
       const showAll = c.spend_by_source || distinctModels.size > 1
-      let list = showAll ? contractorSources : contractorSources.slice(0, 1)
-      list = list.filter(s => {
-        if (s.payment_types?.name) return true
+      const baseList = showAll ? contractorSources : contractorSources.slice(0, 1)
+
+      let items
+      if (showAll) {
+        const groupsSeen = new Set()
+        items = []
+        for (const s of baseList) {
+          if (s.expense_group_id) {
+            if (groupsSeen.has(s.expense_group_id)) continue
+            groupsSeen.add(s.expense_group_id)
+            const members = baseList.filter(m => m.expense_group_id === s.expense_group_id)
+            // Защита: группа валидна только если у всех участников до сих пор
+            // одинаковый payment_type_id (могли поменять после объединения) —
+            // иначе показываем их как отдельные строки, не смешивая формулы.
+            const typesMatch = new Set(members.map(m => m.payment_type_id)).size === 1
+            if (typesMatch && members.length > 1) {
+              items.push({ isGroup: true, members })
+            } else {
+              members.forEach(m => items.push({ isGroup: false, members: [m] }))
+            }
+          } else {
+            items.push({ isGroup: false, members: [s] })
+          }
+        }
+      } else {
+        items = baseList.map(s => ({ isGroup: false, members: [s] }))
+      }
+
+      items = items.filter(item => {
+        if (item.members.some(m => m.payment_types?.name)) return true
         const leads = showAll
-          ? (leadsBySource[s.id] || 0)
+          ? item.members.reduce((sum, m) => sum + (leadsBySource[m.id] || 0), 0)
           : contractorSources.reduce((sum, cs) => sum + (leadsBySource[cs.id] || 0), 0)
         return leads > 0
       })
-      list.forEach(s => out.push({ contractor: c, source: s, showSourceName: showAll }))
+
+      items.forEach(item => out.push({ contractor: c, ...item, showSourceName: showAll }))
     }
     return out
   }, [contractors, sources, leadsBySource])
 
-  function computeRow({ source }) {
-    const paymentName = source.payment_types?.name
-    const leads = leadsBySource[source.id] || 0
-    const retainerWeekly = source.retainer ? (source.retainer / 30.41) * 7 : 0
-    const existing = existingBySource[source.id]
+  function computeRow(row) {
+    const members = row.members
+    const primary = members[0]
+    const paymentName = primary.payment_types?.name
+    const leads = members.reduce((s, m) => s + (leadsBySource[m.id] || 0), 0)
+    const retainerWeekly = members.reduce((s, m) => s + (m.retainer ? (m.retainer / 30.41) * 7 : 0), 0)
+    // Итог по группе всегда пишется в weekly_expenses ЗА ПЕРВЫЙ источник группы (см. saveAll) —
+    // поэтому существующее значение подтягиваем именно оттуда.
+    const existing = existingBySource[primary.id]
 
     if (paymentName === 'Фикс') {
-      const total = Math.round((source.cpl_rate || 0) * leads)
-      return { mode: 'auto', total, detail: `${leads} лид. × ${formatMoney(source.cpl_rate || 0)}` }
+      // Ставка CPL может отличаться у источников внутри группы — считаем
+      // каждый своей ставкой и суммируем, а не берём одну общую ставку.
+      const total = Math.round(members.reduce((s, m) => s + (m.cpl_rate || 0) * (leadsBySource[m.id] || 0), 0))
+      return { mode: 'auto', total, detail: `${leads} лид.` }
     }
     if (paymentName === 'Абонентка') {
       const total = Math.round(retainerWeekly)
@@ -128,16 +164,17 @@ export default function WeeklyExpensesPage() {
     return { mode: 'manual', manualDefault: existing ? existing.spend : '', detail: paymentName ? `модель «${paymentName}» — ручной ввод` : 'модель оплаты не задана' }
   }
 
-  function inputValue(source) {
-    if (manualInputs[source.id] !== undefined) return manualInputs[source.id]
-    const r = computeRow({ source })
+  function inputValue(row) {
+    const key = row.members[0].id
+    if (manualInputs[key] !== undefined) return manualInputs[key]
+    const r = computeRow(row)
     return r.manualDefault ?? ''
   }
 
   function rowTotal(row) {
     const r = computeRow(row)
     if (r.mode === 'auto') return r.total
-    const manual = Number(inputValue(row.source) || 0)
+    const manual = Number(inputValue(row) || 0)
     return r.mode === 'partial' ? manual + r.autoPortion : manual
   }
 
@@ -168,9 +205,10 @@ export default function WeeklyExpensesPage() {
       const r = computeRow(row)
       const spend = rowTotal(row)
       const isAuto = r.mode === 'auto'
-      const existing = existingBySource[row.source.id]
+      const primary = row.members[0]
+      const existing = existingBySource[primary.id]
       const payload = {
-        source_id: row.source.id,
+        source_id: primary.id,
         contractor_id: row.contractor.contractor_id,
         week_start: selectedWeek,
         spend,
@@ -182,6 +220,25 @@ export default function WeeklyExpensesPage() {
         await supabase.from('weekly_expenses').update(payload).eq('id', existing.id)
       } else {
         await supabase.from('weekly_expenses').insert(payload)
+      }
+      // Остальные источники группы — 0, чтобы не оставалось "хвостов" от
+      // периода до объединения (иначе сумма по подрядчику задвоится).
+      for (const other of row.members.slice(1)) {
+        const otherExisting = existingBySource[other.id]
+        const zeroPayload = {
+          source_id: other.id,
+          contractor_id: row.contractor.contractor_id,
+          week_start: selectedWeek,
+          spend: 0,
+          is_auto_calculated: true,
+          entered_by: enteredBy,
+          updated_at: new Date().toISOString(),
+        }
+        if (otherExisting) {
+          await supabase.from('weekly_expenses').update(zeroPayload).eq('id', otherExisting.id)
+        } else {
+          await supabase.from('weekly_expenses').insert(zeroPayload)
+        }
       }
     }
     setSaving(false)
@@ -245,12 +302,17 @@ export default function WeeklyExpensesPage() {
                     )}
                     {group.items.map(row => {
                       const r = computeRow(row)
+                      const primary = row.members[0]
+                      const label = row.isGroup
+                        ? row.members.map(m => m.name).join(' + ')
+                        : (grouped ? primary.name : (row.contractor.short_name || row.contractor.name))
                       return (
-                        <tr key={row.source.id}>
+                        <tr key={primary.id}>
                           <td style={{ fontWeight: grouped ? 400 : 500, paddingLeft: grouped ? 22 : undefined }}>
-                            {grouped ? row.source.name : (row.contractor.short_name || row.contractor.name)}
+                            {label}
+                            {row.isGroup && <span className="badge badge-control" style={{ marginLeft: 6, fontSize: 10 }}>объединено</span>}
                           </td>
-                          <td className="td-muted">{row.source.payment_types?.name || '—'}</td>
+                          <td className="td-muted">{primary.payment_types?.name || '—'}</td>
                           <td style={{ textAlign: 'right' }}>
                             {r.mode === 'auto' ? (
                               <span style={{ fontWeight: 600 }}>{formatMoney(r.total)}</span>
@@ -260,8 +322,8 @@ export default function WeeklyExpensesPage() {
                                   className="form-input"
                                   type="number"
                                   style={{ width: 110, textAlign: 'right' }}
-                                  value={inputValue(row.source)}
-                                  onChange={e => setManualInputs(m => ({ ...m, [row.source.id]: e.target.value }))}
+                                  value={inputValue(row)}
+                                  onChange={e => setManualInputs(m => ({ ...m, [primary.id]: e.target.value }))}
                                   placeholder="0"
                                 />
                                 <span style={{ fontWeight: 600 }}>= {formatMoney(rowTotal(row))}</span>
@@ -271,8 +333,8 @@ export default function WeeklyExpensesPage() {
                                 className="form-input"
                                 type="number"
                                 style={{ width: 110, textAlign: 'right', marginLeft: 'auto', display: 'block' }}
-                                value={inputValue(row.source)}
-                                onChange={e => setManualInputs(m => ({ ...m, [row.source.id]: e.target.value }))}
+                                value={inputValue(row)}
+                                onChange={e => setManualInputs(m => ({ ...m, [primary.id]: e.target.value }))}
                                 placeholder="0"
                               />
                             )}
