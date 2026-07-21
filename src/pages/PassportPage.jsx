@@ -196,7 +196,13 @@ export default function PassportPage({ contractorId, onBack }) {
       return
     }
     setUploading(true)
-    const path = `${contractorId}/${Date.now()}-${selectedFile.name}`
+    // Ключ объекта в Storage должен быть ASCII-safe (кириллица и пробелы дают
+    // "Invalid key") — генерируем безопасный путь, оригинальное имя файла
+    // сохраняем отдельно в file_name только для отображения.
+    const extMatch = selectedFile.name.match(/\.[^.]+$/)
+    const ext = extMatch ? extMatch[0].replace(/[^a-zA-Z0-9.]/g, '') : ''
+    const safeId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const path = `${contractorId}/${safeId}${ext}`
     const { error: uploadError } = await supabase.storage.from('contractor-files').upload(path, selectedFile)
     if (uploadError) { alert('Ошибка загрузки: ' + uploadError.message); setUploading(false); return }
 
