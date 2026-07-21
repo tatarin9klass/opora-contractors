@@ -40,6 +40,7 @@ export default function PassportPage({ contractorId, onBack }) {
   const [deleteAction, setDeleteAction] = useState('delete')
   const [reassignTargetId, setReassignTargetId] = useState('')
   const [deletingLoading, setDeletingLoading] = useState(false)
+  const [allSources, setAllSources] = useState([])
   const [showAddSource, setShowAddSource] = useState(false)
   const [newSource, setNewSource] = useState({ name: '', roistat_marker: '', calltracking_phone: '', landing_url: '', payment_type_id: '', cpl_rate: '', retainer: '', ad_budget: '' })
   const [editContractor, setEditContractor] = useState(false)
@@ -115,17 +116,25 @@ export default function PassportPage({ contractorId, onBack }) {
 
   // Начать удаление источника — сначала смотрим, сколько заявок за ним закреплено
   async function startDeleteSource(source) {
-    const { count } = await supabase.from('daily_facts').select('id', { count: 'exact', head: true }).eq('source_id', source.id)
+    const [{ count }, { data: everySource }] = await Promise.all([
+      supabase.from('daily_facts').select('id', { count: 'exact', head: true }).eq('source_id', source.id),
+      // Перенос заявок доступен на источник ЛЮБОГО подрядчика — привязка источника
+      // к подрядчику иногда сделана неверно, и это единственный способ её исправить.
+      supabase.from('sources').select('id, name, contractor_id, contractors(short_name, name)').order('name'),
+    ])
     setDeleteFactsCount(count || 0)
+    setAllSources(everySource || [])
     setDeletingSource(source)
     setDeleteAction('delete')
     setReassignTargetId('')
   }
 
   // Подтвердить удаление: заявки либо удаляются вместе с источником, либо
-  // переносятся на другой активный источник этого же подрядчика (contractor_id
-  // не меняется — на дашборде по подрядчику ничего не изменится). Расход,
-  // введённый за удаляемым источником, переносу не подлежит и удаляется вместе с ним.
+  // переносятся на другой источник (в том числе другого подрядчика — если
+  // привязка изначально была сделана неверно). При переносе на источник другого
+  // подрядчика contractor_id у заявок меняется вместе с source_id, иначе они
+  // "потеряются" между дашбордом одного подрядчика и источником другого.
+  // Расход, введённый за удаляемым источником, переносу не подлежит и удаляется вместе с ним.
   async function confirmDeleteSource() {
     if (!deletingSource) return
     if (deleteFactsCount > 0 && deleteAction === 'reassign' && !reassignTargetId) {
@@ -135,7 +144,10 @@ export default function PassportPage({ contractorId, onBack }) {
     setDeletingLoading(true)
     if (deleteFactsCount > 0) {
       if (deleteAction === 'reassign') {
-        await supabase.from('daily_facts').update({ source_id: reassignTargetId }).eq('source_id', deletingSource.id)
+        const target = allSources.find(s => s.id === reassignTargetId)
+        await supabase.from('daily_facts')
+          .update({ source_id: reassignTargetId, contractor_id: target?.contractor_id || null })
+          .eq('source_id', deletingSource.id)
       } else {
         await supabase.from('daily_facts').delete().eq('source_id', deletingSource.id)
       }
@@ -506,13 +518,15 @@ export default function PassportPage({ contractorId, onBack }) {
                               </label>
                               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
                                 <input type="radio" checked={deleteAction === 'reassign'} onChange={() => setDeleteAction('reassign')} />
-                                Перенести на другой источник этого подрядчика
+                                Перенести на другой источник (в том числе другого подрядчика)
                               </label>
                               {deleteAction === 'reassign' && (
-                                <select className="form-select" style={{ marginLeft: 22, maxWidth: 280 }} value={reassignTargetId} onChange={e => setReassignTargetId(e.target.value)}>
+                                <select className="form-select" style={{ marginLeft: 22, maxWidth: 320 }} value={reassignTargetId} onChange={e => setReassignTargetId(e.target.value)}>
                                   <option value="">— выберите источник —</option>
-                                  {sources.filter(other => other.id !== s.id).map(other => (
-                                    <option key={other.id} value={other.id}>{other.name}</option>
+                                  {allSources.filter(other => other.id !== s.id).map(other => (
+                                    <option key={other.id} value={other.id}>
+                                      {(other.contractors?.short_name || other.contractors?.name || '—')} · {other.name}
+                                    </option>
                                   ))}
                                 </select>
                               )}
