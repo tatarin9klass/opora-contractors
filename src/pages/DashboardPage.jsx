@@ -28,8 +28,8 @@ function monthLabel(dateStr) {
 
 function deviationColor(metric, fact, plan) {
   if (!plan || plan === 0 || fact == null) return 'var(--text-secondary)'
-  const positive = ['leads', 'quals', 'meetings', 'deals', 'cr_lq', 'cr_qm', 'cr_mo'].includes(metric)
-  const cost = ['spend', 'cpl', 'cpql', 'cac'].includes(metric)
+  const positive = ['leads', 'quals', 'meetings', 'deals', 'cr_lq', 'cr_qm', 'cr_mo', 'cr_lo', 'revenue', 'aov'].includes(metric)
+  const cost = ['spend', 'cpl', 'cpql', 'cac', 'cpm'].includes(metric)
   if (positive) return fact >= plan ? 'var(--green-primary)' : 'var(--red)'
   if (cost) return fact <= plan ? 'var(--green-primary)' : 'var(--red)'
   return 'var(--text-secondary)'
@@ -109,14 +109,19 @@ export default function DashboardPage({ onOpenPassport }) {
     const meetings = rows.reduce((s, r) => s + (r.meetings || 0), 0)
     const deals = rows.reduce((s, r) => s + (r.deals || 0), 0)
     const spend = rows.reduce((s, r) => s + (Number(r.spend) || 0), 0)
+    const revenue = rows.reduce((s, r) => s + (Number(r.revenue) || 0), 0)
+    const cac = deals > 0 ? Math.round(spend / deals) : null
     return {
-      spend, leads, quals, meetings, deals,
+      spend, leads, quals, meetings, deals, revenue,
       cpl: leads > 0 ? Math.round(spend / leads) : null,
       cpql: quals > 0 ? Math.round(spend / quals) : null,
-      cac: deals > 0 ? Math.round(spend / deals) : null,
+      cac,
+      cpm: meetings > 0 ? Math.round(spend / meetings) : null,
       cr_lq: leads > 0 ? Math.round((quals / leads) * 1000) / 10 : null,
       cr_qm: quals > 0 ? Math.round((meetings / quals) * 1000) / 10 : null,
       cr_mo: meetings > 0 ? Math.round((deals / meetings) * 1000) / 10 : null,
+      cr_lo: leads > 0 ? Math.round((deals / leads) * 1000) / 10 : null,
+      aov: cac ? Math.round(revenue / cac) : null,
     }
   }
 
@@ -142,13 +147,14 @@ export default function DashboardPage({ onOpenPassport }) {
       const t = contractorTargets[r.contractor_id]
       const leads = r.leads || 0, quals = r.quals || 0, meetings = r.meetings || 0, deals = r.deals || 0
       const spend = Number(r.spend) || 0
+      const revenue = Number(r.revenue) || 0
       const proratePlan = v => (v == null ? null : Math.round(v * weekRatioForFreeze))
       return {
         week_start: selectedWeek,
         week_end: weekEnd,
         contractor_id: r.contractor_id,
         contractor_name: r.contractors?.short_name || r.contractors?.name || null,
-        leads, quals, meetings, deals, spend,
+        leads, quals, meetings, deals, spend, revenue,
         cpl: leads > 0 ? Math.round(spend / leads) : null,
         cpql: quals > 0 ? Math.round(spend / quals) : null,
         cac: deals > 0 ? Math.round(spend / deals) : null,
@@ -177,7 +183,7 @@ export default function DashboardPage({ onOpenPassport }) {
         byContractor[r.contractor_id] = {
           contractor_id: r.contractor_id,
           contractor_name: r.contractors?.short_name || r.contractors?.name || null,
-          leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0,
+          leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0,
         }
       }
       const b = byContractor[r.contractor_id]
@@ -186,6 +192,7 @@ export default function DashboardPage({ onOpenPassport }) {
       b.meetings += r.meetings || 0
       b.deals += r.deals || 0
       b.spend += Number(r.spend) || 0
+      b.revenue += Number(r.revenue) || 0
     })
     const inserts = Object.values(byContractor).map(b => {
       const t = contractorTargets[b.contractor_id]
@@ -193,7 +200,7 @@ export default function DashboardPage({ onOpenPassport }) {
         month: selectedMonth,
         contractor_id: b.contractor_id,
         contractor_name: b.contractor_name,
-        leads: b.leads, quals: b.quals, meetings: b.meetings, deals: b.deals, spend: b.spend,
+        leads: b.leads, quals: b.quals, meetings: b.meetings, deals: b.deals, spend: b.spend, revenue: b.revenue,
         cpl: b.leads > 0 ? Math.round(b.spend / b.leads) : null,
         cpql: b.quals > 0 ? Math.round(b.spend / b.quals) : null,
         cac: b.deals > 0 ? Math.round(b.spend / b.deals) : null,
@@ -260,9 +267,13 @@ export default function DashboardPage({ onOpenPassport }) {
     if (key === 'cpl') return leads > 0 ? Math.round(spend / leads) : null
     if (key === 'cpql') return quals > 0 ? Math.round(spend / quals) : null
     if (key === 'cac') return deals > 0 ? Math.round(spend / deals) : null
+    if (key === 'cpm') return meetings > 0 ? Math.round(spend / meetings) : null
     if (key === 'cr_lq') return leads > 0 ? Math.round((quals / leads) * 1000) / 10 : null
     if (key === 'cr_qm') return quals > 0 ? Math.round((meetings / quals) * 1000) / 10 : null
     if (key === 'cr_mo') return meetings > 0 ? Math.round((deals / meetings) * 1000) / 10 : null
+    if (key === 'cr_lo') return leads > 0 ? Math.round((deals / leads) * 1000) / 10 : null
+    // Revenue/AOV — плана нет: нет способа прогнозировать средний чек сделки
+    // из 5 базовых плановых метрик (spend/leads/quals/meetings/deals).
     return null
   }
 
@@ -341,11 +352,14 @@ export default function DashboardPage({ onOpenPassport }) {
   ]
 
   const extraRows = [
-    { label: 'Встречи', key: 'meetings', factRaw: fact.meetings, format: v => v },
+    { label: 'Meeting', key: 'meetings', factRaw: fact.meetings, format: v => v },
     { label: 'CR(q→m)', key: 'cr_qm', factRaw: fact.cr_qm, format: v => `${v}%` },
-    { label: 'Сделки', key: 'deals', factRaw: fact.deals, format: v => v },
+    { label: 'CPM', key: 'cpm', factRaw: fact.cpm, format: v => formatMoney(v) },
+    { label: 'Orders', key: 'deals', factRaw: fact.deals, format: v => v },
     { label: 'CAC', key: 'cac', factRaw: fact.cac, format: v => formatMoney(v) },
-    { label: 'CR(m→o)', key: 'cr_mo', factRaw: fact.cr_mo, format: v => `${v}%` },
+    { label: 'CR(l→o)', key: 'cr_lo', factRaw: fact.cr_lo, format: v => `${v}%` },
+    { label: 'Revenue', key: 'revenue', factRaw: fact.revenue, format: v => formatMoney(v) },
+    { label: 'AOV', key: 'aov', factRaw: fact.aov, format: v => formatMoney(v) },
   ]
 
   return (

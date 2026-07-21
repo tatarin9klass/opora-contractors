@@ -150,6 +150,17 @@ function groupBySourceName(items: any[], sourceIdField: string, sourceMap: Map<s
   return result;
 }
 
+// Как groupBySourceName, но суммирует числовое поле (OPPORTUNITY сделки) вместо счётчика.
+function sumBySourceName(items: any[], sourceIdField: string, valueField: string, sourceMap: Map<string, string>) {
+  const result: Record<string, number> = {};
+  for (const item of items) {
+    const name = sourceMap.get(String(item[sourceIdField] || ""));
+    if (!name) continue;
+    result[name] = (result[name] || 0) + (Number(item[valueField]) || 0);
+  }
+  return result;
+}
+
 function toDateMsk(isoStr: string): string {
   if (!isoStr) return "";
   const msk = new Date(new Date(isoStr).getTime() + 3 * 60 * 60 * 1000);
@@ -206,7 +217,7 @@ Deno.serve(async (req: Request) => {
       // Дата берётся из спец.поля "дата входа в стадию оплаты", а не из MOVED_TIME/текущей стадии.
       bitrixListSinceId("crm.deal.list", {
         filter: { CATEGORY_ID: DEAL_CATEGORY_ID },
-        select: ["ID", "SOURCE_ID", DEAL_PAID_DATE_FIELD],
+        select: ["ID", "SOURCE_ID", DEAL_PAID_DATE_FIELD, "OPPORTUNITY"],
       }, dealsFromId),
       // ИСПРАВЛЕНО: раньше тянули только ПЕРВУЮ страницу (до 50 записей) отсортированную по id —
       // встреча, созданная давно но проведённая на этой неделе, могла не попасть в топ-50 по id
@@ -245,6 +256,8 @@ Deno.serve(async (req: Request) => {
     const qualsBySource = groupBySourceName(qualsForDay, "SOURCE_ID", sourceMap);
     const dealsBySource = groupBySourceName(dealsForDay, "SOURCE_ID", sourceMap);
     const meetingsBySource = groupBySourceName(meetingsForDay, "sourceId", sourceMap);
+    // Revenue = сумма OPPORTUNITY сделок, оплаченных в этот день (тот же набор dealsForDay).
+    const revenueBySource = sumBySourceName(dealsForDay, "SOURCE_ID", "OPPORTUNITY", sourceMap);
 
     const allSources = new Set([...Object.keys(leadsBySource), ...Object.keys(qualsBySource), ...Object.keys(dealsBySource), ...Object.keys(meetingsBySource)]);
 
@@ -271,7 +284,7 @@ Deno.serve(async (req: Request) => {
         await supabase.from("daily_facts").upsert({
           fact_date: targetDate,
           source_marker: row.source_marker,
-          leads: 0, quals: 0, meetings: 0, deals: 0,
+          leads: 0, quals: 0, meetings: 0, deals: 0, revenue: 0,
         }, { onConflict: "fact_date,source_marker" });
       }
     }
@@ -281,6 +294,7 @@ Deno.serve(async (req: Request) => {
       const qualsCount = qualsBySource[sourceName] || 0;
       const dealsCount = dealsBySource[sourceName] || 0;
       const meetingsCount = meetingsBySource[sourceName] || 0;
+      const revenueSum = revenueBySource[sourceName] || 0;
       const matched = dbSourceMap.get(sourceName.toLowerCase());
 
       if (!matched) {
@@ -298,10 +312,10 @@ Deno.serve(async (req: Request) => {
         source_marker: sourceName,
         contractor_id: matched?.contractor_id || null,
         source_id: matched?.id || null,
-        leads: leadsCount, quals: qualsCount, meetings: meetingsCount, deals: dealsCount,
+        leads: leadsCount, quals: qualsCount, meetings: meetingsCount, deals: dealsCount, revenue: revenueSum,
       }, { onConflict: "fact_date,source_marker" });
 
-      results.push({ source: sourceName, matched: !!matched, leads: leadsCount, quals: qualsCount, meetings: meetingsCount, deals: dealsCount });
+      results.push({ source: sourceName, matched: !!matched, leads: leadsCount, quals: qualsCount, meetings: meetingsCount, deals: dealsCount, revenue: revenueSum });
     }
 
     return new Response(JSON.stringify({
