@@ -87,10 +87,12 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
   const [metricPickerOpen, setMetricPickerOpen] = useState(false)
   const [controlsOpen, setControlsOpen] = useState(false)
   const metricPickerRef = useRef(null)
+  const controlsRef = useRef(null)
 
   useEffect(() => {
     function onDocClick(e) {
       if (metricPickerRef.current && !metricPickerRef.current.contains(e.target)) setMetricPickerOpen(false)
+      if (controlsRef.current && !controlsRef.current.contains(e.target)) setControlsOpen(false)
     }
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
@@ -463,54 +465,56 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
           </div>
         </div>
 
-        <button className="btn btn-secondary btn-sm" onClick={() => setControlsOpen(o => !o)}>
-          ⚙️ Период и план {controlsOpen ? '▴' : '▾'}
-        </button>
-      </div>
+        <div ref={controlsRef} style={{ position: 'relative' }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => setControlsOpen(o => !o)}>
+            ⚙️ Период и план {controlsOpen ? '▴' : '▾'}
+          </button>
 
-      {controlsOpen && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20 }}>
-          <div style={{ display: 'flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 24, padding: 3 }}>
-            {['month', 'week'].map(m => (
-              <button key={m} onClick={() => setMode(m)} style={{
-                padding: '6px 16px', borderRadius: 20, border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer',
-                background: mode === m ? 'var(--green-dark)' : 'transparent',
-                color: mode === m ? '#fff' : 'var(--text-secondary)',
-                transition: 'all 0.15s'
-              }}>{m === 'month' ? 'Месяц' : 'Неделя'}</button>
-            ))}
-          </div>
+          {controlsOpen && (
+            <div style={{ position: 'absolute', right: 0, top: '110%', zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 10, background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 14, minWidth: 240, boxShadow: '0 6px 20px rgba(0,0,0,0.12)' }}>
+              <div style={{ display: 'flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 24, padding: 3 }}>
+                {['month', 'week'].map(m => (
+                  <button key={m} onClick={() => setMode(m)} style={{
+                    flex: 1, padding: '6px 16px', borderRadius: 20, border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer',
+                    background: mode === m ? 'var(--green-dark)' : 'transparent',
+                    color: mode === m ? '#fff' : 'var(--text-secondary)',
+                    transition: 'all 0.15s'
+                  }}>{m === 'month' ? 'Месяц' : 'Неделя'}</button>
+                ))}
+              </div>
 
-          {mode === 'month' ? (
-            <select className="form-select" style={{ minWidth: 200 }} value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
-              {availableMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
-            </select>
-          ) : (
-            <select className="form-select" style={{ minWidth: 200 }} value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}>
-              {availableWeeks.length === 0
-                ? <option value={getWeekStart()}>{weekLabel(getWeekStart())}</option>
-                : availableWeeks.map(w => <option key={w} value={w}>{weekLabel(w)}</option>)
-              }
-            </select>
+              {mode === 'month' ? (
+                <select className="form-select" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
+                  {availableMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                </select>
+              ) : (
+                <select className="form-select" value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}>
+                  {availableWeeks.length === 0
+                    ? <option value={getWeekStart()}>{weekLabel(getWeekStart())}</option>
+                    : availableWeeks.map(w => <option key={w} value={w}>{weekLabel(w)}</option>)
+                  }
+                </select>
+              )}
+
+              {isAdmin && mode === 'month' && (
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowTargetModal(true)}>
+                  {target ? '✏️ Редактировать план' : '+ Задать план'}
+                </button>
+              )}
+
+              {isAdmin && (isFrozen ? (
+                <button className="btn btn-secondary btn-sm" onClick={unfreeze} disabled={freezing}>
+                  {freezing ? '...' : '🔓 Разморозить и пересчитать'}
+                </button>
+              ) : (
+                <button className="btn btn-secondary btn-sm" onClick={mode === 'week' ? freezeWeek : freezeMonth} disabled={freezing}>
+                  {freezing ? '...' : '🔒 Заморозить период'}
+                </button>
+              ))}
+            </div>
           )}
-
-          {isAdmin && mode === 'month' && (
-            <button className="btn btn-secondary btn-sm" onClick={() => setShowTargetModal(true)}>
-              {target ? '✏️ Редактировать план' : '+ Задать план'}
-            </button>
-          )}
-
-          {isAdmin && (isFrozen ? (
-            <button className="btn btn-secondary btn-sm" onClick={unfreeze} disabled={freezing}>
-              {freezing ? '...' : '🔓 Разморозить и пересчитать'}
-            </button>
-          ) : (
-            <button className="btn btn-secondary btn-sm" onClick={mode === 'week' ? freezeWeek : freezeMonth} disabled={freezing}>
-              {freezing ? '...' : '🔒 Заморозить период'}
-            </button>
-          ))}
         </div>
-      )}
+      </div>
 
       <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
