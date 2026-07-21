@@ -40,7 +40,7 @@ select
   f.quals,
   f.meetings,
   f.deals,
-  f.revenue,
-  coalesce(e.spend, 0::numeric) as spend
+  coalesce(e.spend, 0::numeric) as spend,
+  f.revenue
 from facts_agg f
 left join expenses_agg e on e.contractor_id = f.contractor_id and e.week_start = f.week_start;
