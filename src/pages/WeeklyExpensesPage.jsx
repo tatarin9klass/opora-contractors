@@ -30,6 +30,7 @@ export default function WeeklyExpensesPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState(null)
+  const [showHidden, setShowHidden] = useState(false)
 
   // ТЗ раздел 3/9: замороженную неделю редактировать нельзя — исключаем её
   // из выбора и, если по умолчанию выбранная неделя оказалась заморожена,
@@ -172,13 +173,24 @@ export default function WeeklyExpensesPage() {
 
   const totalSum = rows.reduce((s, row) => s + rowTotal(row), 0)
 
+  // Бесплатный трафик — расход всегда 0, вводить нечего. Такие строки не
+  // показываем в основном списке (и не показываем подрядчика вообще, если у
+  // него ВСЕ источники бесплатные — это просто выпадает само собой из
+  // visibleRows), но не удаляем безвозвратно — есть отдельная сворачиваемая
+  // секция, чтобы можно было изредка проверить, что там ничего не поменялось.
+  function isFreeTrafficRow(row) {
+    return row.members.every(m => m.payment_types?.name === 'Бесплатный трафик')
+  }
+  const visibleRows = rows.filter(row => !isFreeTrafficRow(row))
+  const hiddenRows = rows.filter(row => isFreeTrafficRow(row))
+
   // Группировка по подрядчику — если у подрядчика несколько строк (разные
   // источники), показываем подзаголовок с названием подрядчика один раз,
   // а строки под ним — по источникам.
-  const groupedRows = useMemo(() => {
+  function buildGroupedRows(list) {
     const groups = []
     const byContractor = new Map()
-    for (const row of rows) {
+    for (const row of list) {
       const key = row.contractor.contractor_id
       if (!byContractor.has(key)) {
         const group = { contractor: row.contractor, items: [] }
@@ -188,7 +200,9 @@ export default function WeeklyExpensesPage() {
       byContractor.get(key).items.push(row)
     }
     return groups
-  }, [rows])
+  }
+  const groupedRows = useMemo(() => buildGroupedRows(visibleRows), [visibleRows])
+  const hiddenGroupedRows = useMemo(() => buildGroupedRows(hiddenRows), [hiddenRows])
 
   async function saveAll() {
     if (!enteredBy) { alert('Укажи, кто вносит расход'); return }
@@ -241,6 +255,69 @@ export default function WeeklyExpensesPage() {
 
   if (loading) return <div className="loading">Загрузка...</div>
 
+  // Общее тело таблицы для основного списка и для сворачиваемого списка
+  // скрытых (бесплатный трафик) строк — рендерятся одинаково.
+  function renderGroups(groups) {
+    return groups.map(group => {
+      const grouped = group.items.length > 1
+      return (
+        <React.Fragment key={group.contractor.contractor_id}>
+          {grouped && (
+            <tr>
+              <td colSpan={4} style={{ padding: '10px 6px 4px', fontWeight: 700, fontSize: 13, borderBottom: 'none' }}>
+                {group.contractor.short_name || group.contractor.name}
+                <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 11, marginLeft: 8 }}>разные источники / модели оплаты</span>
+              </td>
+            </tr>
+          )}
+          {group.items.map(row => {
+            const r = computeRow(row)
+            const primary = row.members[0]
+            const label = row.isGroup
+              ? row.members.map(m => m.name).join(' + ')
+              : (grouped ? primary.name : (row.contractor.short_name || row.contractor.name))
+            return (
+              <tr key={primary.id}>
+                <td style={{ fontWeight: grouped ? 400 : 500, paddingLeft: grouped ? 22 : undefined }}>
+                  {label}
+                  {row.isGroup && <span className="badge badge-control" style={{ marginLeft: 6, fontSize: 10 }}>объединено</span>}
+                </td>
+                <td className="td-muted">{primary.payment_types?.name || '—'}</td>
+                <td style={{ textAlign: 'right' }}>
+                  {r.mode === 'auto' ? (
+                    <span style={{ fontWeight: 600 }}>{formatMoney(r.total)}</span>
+                  ) : r.mode === 'partial' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                      <input
+                        className="form-input"
+                        type="number"
+                        style={{ width: 110, textAlign: 'right' }}
+                        value={inputValue(row)}
+                        onChange={e => setManualInputs(m => ({ ...m, [primary.id]: e.target.value }))}
+                        placeholder="0"
+                      />
+                      <span style={{ fontWeight: 600 }}>= {formatMoney(rowTotal(row))}</span>
+                    </div>
+                  ) : (
+                    <input
+                      className="form-input"
+                      type="number"
+                      style={{ width: 110, textAlign: 'right', marginLeft: 'auto', display: 'block' }}
+                      value={inputValue(row)}
+                      onChange={e => setManualInputs(m => ({ ...m, [primary.id]: e.target.value }))}
+                      placeholder="0"
+                    />
+                  )}
+                </td>
+                <td className="td-muted" style={{ fontSize: 11 }}>{r.detail}</td>
+              </tr>
+            )
+          })}
+        </React.Fragment>
+      )
+    })
+  }
+
   return (
     <div>
       <div className="info-card" style={{ marginBottom: 16 }}>
@@ -267,7 +344,7 @@ export default function WeeklyExpensesPage() {
       </div>
 
       <div className="table-wrap">
-        {rows.length === 0 ? (
+        {visibleRows.length === 0 ? (
           <div className="empty-state"><div className="empty-state-icon">💸</div><h3>Нет активных подрядчиков с источниками</h3></div>
         ) : (
           <table>
@@ -279,69 +356,33 @@ export default function WeeklyExpensesPage() {
                 <th>Комментарий</th>
               </tr>
             </thead>
-            <tbody>
-              {groupedRows.map(group => {
-                const grouped = group.items.length > 1
-                return (
-                  <React.Fragment key={group.contractor.contractor_id}>
-                    {grouped && (
-                      <tr>
-                        <td colSpan={4} style={{ padding: '10px 6px 4px', fontWeight: 700, fontSize: 13, borderBottom: 'none' }}>
-                          {group.contractor.short_name || group.contractor.name}
-                          <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 11, marginLeft: 8 }}>разные источники / модели оплаты</span>
-                        </td>
-                      </tr>
-                    )}
-                    {group.items.map(row => {
-                      const r = computeRow(row)
-                      const primary = row.members[0]
-                      const label = row.isGroup
-                        ? row.members.map(m => m.name).join(' + ')
-                        : (grouped ? primary.name : (row.contractor.short_name || row.contractor.name))
-                      return (
-                        <tr key={primary.id}>
-                          <td style={{ fontWeight: grouped ? 400 : 500, paddingLeft: grouped ? 22 : undefined }}>
-                            {label}
-                            {row.isGroup && <span className="badge badge-control" style={{ marginLeft: 6, fontSize: 10 }}>объединено</span>}
-                          </td>
-                          <td className="td-muted">{primary.payment_types?.name || '—'}</td>
-                          <td style={{ textAlign: 'right' }}>
-                            {r.mode === 'auto' ? (
-                              <span style={{ fontWeight: 600 }}>{formatMoney(r.total)}</span>
-                            ) : r.mode === 'partial' ? (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
-                                <input
-                                  className="form-input"
-                                  type="number"
-                                  style={{ width: 110, textAlign: 'right' }}
-                                  value={inputValue(row)}
-                                  onChange={e => setManualInputs(m => ({ ...m, [primary.id]: e.target.value }))}
-                                  placeholder="0"
-                                />
-                                <span style={{ fontWeight: 600 }}>= {formatMoney(rowTotal(row))}</span>
-                              </div>
-                            ) : (
-                              <input
-                                className="form-input"
-                                type="number"
-                                style={{ width: 110, textAlign: 'right', marginLeft: 'auto', display: 'block' }}
-                                value={inputValue(row)}
-                                onChange={e => setManualInputs(m => ({ ...m, [primary.id]: e.target.value }))}
-                                placeholder="0"
-                              />
-                            )}
-                          </td>
-                          <td className="td-muted" style={{ fontSize: 11 }}>{r.detail}</td>
-                        </tr>
-                      )
-                    })}
-                  </React.Fragment>
-                )
-              })}
-            </tbody>
+            <tbody>{renderGroups(groupedRows)}</tbody>
           </table>
         )}
       </div>
+
+      {hiddenRows.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => setShowHidden(s => !s)}>
+            {showHidden ? '▴' : '▾'} Скрытые (бесплатный трафик) — {hiddenRows.length}
+          </button>
+          {showHidden && (
+            <div className="table-wrap" style={{ marginTop: 8 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Подрядчик / источник</th>
+                    <th>Модель</th>
+                    <th style={{ textAlign: 'right' }}>Сумма</th>
+                    <th>Комментарий</th>
+                  </tr>
+                </thead>
+                <tbody>{renderGroups(hiddenGroupedRows)}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
