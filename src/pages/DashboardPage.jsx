@@ -127,7 +127,13 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
       revenue: h.revenue,
       contractors: null,
     }))
-    const stats = [...(statsRes.data || []), ...historicalStats]
+    // Историческая неделя ПЕРЕЗАПИСЫВАЕТ живые данные за ту же неделю, а не
+    // складывается с ними — если по неделе уже успел натечь live-импорт из
+    // Битрикса (актуально для недавних недель), его строки за эту неделю
+    // отбрасываем целиком в пользу вручную введённой сводки.
+    const historicalWeeks = new Set(historicalStats.map(h => h.week_start))
+    const liveStats = (statsRes.data || []).filter(r => !historicalWeeks.has(r.week_start))
+    const stats = [...liveStats, ...historicalStats]
     setWeeklyStats(stats)
     setContractors(contractorsRes.data || [])
 
