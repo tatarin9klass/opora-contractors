@@ -273,9 +273,13 @@ export default function WeeklyExpensesPage() {
           {group.items.map(row => {
             const r = computeRow(row)
             const primary = row.members[0]
-            const label = row.isGroup
-              ? row.members.map(m => m.name).join(' + ')
-              : (grouped ? primary.name : (row.contractor.short_name || row.contractor.name))
+            // Если у подрядчика всего одна строка (не важно, группа это или
+            // одиночный источник) — показываем имя подрядчика, а не имя(-а)
+            // источника(-ов). Названия источников группы показываем только
+            // когда у подрядчика ЕЩЁ есть другие строки, чтобы их различать.
+            const label = !grouped
+              ? (row.contractor.short_name || row.contractor.name)
+              : (row.isGroup ? row.members.map(m => m.name).join(' + ') : primary.name)
             return (
               <tr key={primary.id}>
                 <td style={{ fontWeight: grouped ? 400 : 500, paddingLeft: grouped ? 22 : undefined }}>
