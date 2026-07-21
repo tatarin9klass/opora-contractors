@@ -104,13 +104,30 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
 
   async function load() {
     setLoading(true)
-    const [statsRes, contractorsRes, targetsRes] = await Promise.all([
+    const [statsRes, contractorsRes, targetsRes, historicalRes] = await Promise.all([
       // ИСТОЧНИК ПРАВДЫ: weekly_stats (daily_facts + weekly_expenses), не weekly_facts
       supabase.from('weekly_stats').select('*, contractors(id, name, short_name, contractor_statuses(name, is_active))'),
       supabase.from('contractor_mtd').select('*'),
       supabase.from('contractor_targets').select('*'),
+      // Историческая сводка по компании целиком (не по подрядчикам), присланная
+      // вручную за недели до начала работы системы — видна только на дашборде.
+      // contractor_id у этих строк намеренно нет (null), поэтому все
+      // per-контрактор проверки (Зоны внимания, Нет данных, заморозка) их
+      // просто игнорируют — участвуют только в agregate()/графике.
+      supabase.from('dashboard_historical_weeks').select('*'),
     ])
-    const stats = statsRes.data || []
+    const historicalStats = (historicalRes.data || []).map(h => ({
+      contractor_id: null,
+      week_start: h.week_start,
+      leads: h.leads,
+      quals: h.quals,
+      meetings: h.meetings,
+      deals: h.deals,
+      spend: h.spend,
+      revenue: h.revenue,
+      contractors: null,
+    }))
+    const stats = [...(statsRes.data || []), ...historicalStats]
     setWeeklyStats(stats)
     setContractors(contractorsRes.data || [])
 
