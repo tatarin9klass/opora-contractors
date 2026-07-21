@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase.js'
 import { formatMoney } from '../lib/helpers.js'
 import { weekStart as getWeekStart, addDaysISO } from '../lib/dateContext.js'
@@ -30,6 +30,8 @@ function formatByKind(kind, v) {
   if (kind === 'percent') return `${v}%`
   return String(v)
 }
+
+const CHART_LINE_COLORS = ['#3A7E34', '#1f3b27', '#d93025', '#2563eb', '#b45309', '#7c3aed', '#0891b2', '#be185d', '#65a30d', '#9333ea', '#0d9488', '#c2410c', '#4338ca', '#a16207']
 
 function getISOWeek(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -81,7 +83,22 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
   const [showTargetModal, setShowTargetModal] = useState(false)
   const [frozenRows, setFrozenRows] = useState([])
   const [freezing, setFreezing] = useState(false)
-  const [chartMetric, setChartMetric] = useState('leads')
+  const [chartMetrics, setChartMetrics] = useState(['leads'])
+  const [metricPickerOpen, setMetricPickerOpen] = useState(false)
+  const [controlsOpen, setControlsOpen] = useState(false)
+  const metricPickerRef = useRef(null)
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (metricPickerRef.current && !metricPickerRef.current.contains(e.target)) setMetricPickerOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [])
+
+  function toggleChartMetric(key) {
+    setChartMetrics(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+  }
 
   async function load() {
     setLoading(true)
@@ -176,7 +193,12 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
     }))
   }, [weeklyStats])
 
-  const activeChartMetric = CHART_METRICS.find(m => m.key === chartMetric) || CHART_METRICS[0]
+  const selectedMetricDefs = chartMetrics.map(k => CHART_METRICS.find(m => m.key === k)).filter(Boolean)
+  // Ось Y — либо деньги, либо проценты, либо просто число (по ТЗ формулировке
+  // "числовой показатель либо процентный"). Если выбраны метрики разных видов —
+  // не форматируем ось специально, чтобы не вводить в заблуждение.
+  const chartAxisKinds = new Set(selectedMetricDefs.map(m => m.kind))
+  const chartAxisKind = chartAxisKinds.size === 1 ? [...chartAxisKinds][0] : 'number'
 
   const weekRatioForFreeze = 1 / 4.33
 
@@ -423,7 +445,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
             ПЛАН / ФАКТ
@@ -441,7 +463,13 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+        <button className="btn btn-secondary btn-sm" onClick={() => setControlsOpen(o => !o)}>
+          ⚙️ Период и план {controlsOpen ? '▴' : '▾'}
+        </button>
+      </div>
+
+      {controlsOpen && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20 }}>
           <div style={{ display: 'flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 24, padding: 3 }}>
             {['month', 'week'].map(m => (
               <button key={m} onClick={() => setMode(m)} style={{
@@ -482,17 +510,31 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
             </button>
           ))}
         </div>
-      </div>
+      )}
 
       <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Динамика по неделям</div>
-          <select className="form-select" style={{ minWidth: 180 }} value={chartMetric} onChange={e => setChartMetric(e.target.value)}>
-            {CHART_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-          </select>
+          <div ref={metricPickerRef} style={{ position: 'relative' }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setMetricPickerOpen(o => !o)}>
+              {selectedMetricDefs.length === 0 ? 'Выберите метрики' : selectedMetricDefs.map(m => m.label).join(', ')} {metricPickerOpen ? '▴' : '▾'}
+            </button>
+            {metricPickerOpen && (
+              <div style={{ position: 'absolute', right: 0, top: '110%', zIndex: 10, background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 8, minWidth: 220, maxHeight: 320, overflowY: 'auto', boxShadow: '0 6px 20px rgba(0,0,0,0.12)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {CHART_METRICS.map(m => (
+                  <label key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', padding: '5px 6px', borderRadius: 6 }}>
+                    <input type="checkbox" checked={chartMetrics.includes(m.key)} onChange={() => toggleChartMetric(m.key)} />
+                    {m.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-        {weeklySeries.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 13 }}>Нет данных</div>
+        {weeklySeries.length === 0 || selectedMetricDefs.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+            {selectedMetricDefs.length === 0 ? 'Выберите хотя бы одну метрику' : 'Нет данных'}
+          </div>
         ) : (
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={weeklySeries} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
@@ -500,14 +542,17 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
               <XAxis dataKey="xLabel" tick={{ fontSize: 11, fill: '#8a9590' }} />
               <YAxis
                 tick={{ fontSize: 11, fill: '#8a9590' }}
-                width={activeChartMetric.kind === 'money' ? 90 : 50}
-                tickFormatter={v => formatByKind(activeChartMetric.kind, v)}
+                width={chartAxisKind === 'money' ? 90 : 50}
+                tickFormatter={v => formatByKind(chartAxisKind, v)}
               />
               <Tooltip
-                formatter={v => [formatByKind(activeChartMetric.kind, v), activeChartMetric.label]}
+                formatter={(value, name, props) => [formatByKind(CHART_METRICS.find(m => m.key === props.dataKey)?.kind, value), name]}
                 labelFormatter={(label, payload) => payload?.[0]?.payload ? weekLabel(payload[0].payload.week_start) : label}
               />
-              <Line type="monotone" dataKey={chartMetric} stroke="#3A7E34" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              {selectedMetricDefs.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
+              {selectedMetricDefs.map((m, i) => (
+                <Line key={m.key} type="monotone" dataKey={m.key} name={m.label} stroke={CHART_LINE_COLORS[i % CHART_LINE_COLORS.length]} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              ))}
             </LineChart>
           </ResponsiveContainer>
         )}
