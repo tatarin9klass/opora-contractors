@@ -3,10 +3,9 @@ import { supabase } from '../lib/supabase.js'
 import { formatMoney, formatDate } from '../lib/helpers.js'
 import { todayISO, weekStartOf, addDaysISO } from '../lib/dateContext.js'
 
-// ТЗ раздел 8: только 3 модели оплаты в работе. Фикс и Абонентка — полностью
-// авто, без поля ввода. Абонентка + бюджет — частично вручную (бюджет за
-// неделю) + авто-доля абонентки.
-const AUTO_ONLY = new Set(['Фикс', 'Абонентка'])
+// ТЗ раздел 8: Фикс и Абонентка — полностью авто, без поля ввода. Абонентка +
+// бюджет — частично вручную (бюджет за неделю) + авто-доля абонентки.
+// Бесплатный трафик — расход всегда 0, поле ввода не нужно вообще.
 const PARTIAL = 'Абонентка + бюджет'
 
 function weekOptions() {
@@ -116,6 +115,9 @@ export default function WeeklyExpensesPage() {
     if (paymentName === 'Абонентка') {
       const total = Math.round(retainerWeekly)
       return { mode: 'auto', total, detail: 'абонентка / нед.' }
+    }
+    if (paymentName === 'Бесплатный трафик') {
+      return { mode: 'auto', total: 0, detail: 'бесплатный трафик — расход не вводится' }
     }
     if (paymentName === PARTIAL) {
       const autoPortion = Math.round(retainerWeekly)

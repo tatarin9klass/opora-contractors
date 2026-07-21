@@ -16,6 +16,11 @@ export function getStatusClass(status) {
   return STATUS_BADGE[status] || 'badge-pause'
 }
 
+// ТЗ раздел 8.1: только эти модели оплаты в работе — остальные (CPL, Процент,
+// Смешанная) остаются в справочнике для истории, но скрыты из выбора.
+// «Бесплатный трафик» — расход не вводится и не считается вообще (всегда 0).
+export const ACTIVE_PAYMENT_TYPES = ['Фикс', 'Абонентка', 'Абонентка + бюджет', 'Бесплатный трафик']
+
 export function cplClass(val) {
   if (!val) return 'metric-empty'
   if (val <= 1200) return 'metric-ok'

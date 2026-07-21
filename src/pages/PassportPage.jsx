@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
-import { getStatusClass, cplClass, cpqlClass, cacClass, formatMoney, formatDate, metricCardClass } from '../lib/helpers.js'
+import { getStatusClass, cplClass, cpqlClass, cacClass, formatMoney, formatDate, metricCardClass, ACTIVE_PAYMENT_TYPES } from '../lib/helpers.js'
 import ChangeStatusModal from '../components/ChangeStatusModal.jsx'
 import AddDecisionModal from '../components/AddDecisionModal.jsx'
 import WeeklyFactModal from '../components/WeeklyFactModal.jsx'
@@ -262,7 +262,7 @@ export default function PassportPage({ contractorId, onBack }) {
               <label className="form-label">Тип оплаты</label>
               <select className="form-select" value={form.payment_type_id || ''} onChange={e => set('payment_type_id', e.target.value)}>
                 <option value="">— не задано —</option>
-                {paymentTypes.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {paymentTypes.filter(p => ACTIVE_PAYMENT_TYPES.includes(p.name)).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
             <div className="form-group"><label className="form-label">Ставка CPL (₽)</label><input className="form-input" type="number" value={form.cpl_rate || ''} onChange={e => set('cpl_rate', e.target.value)} placeholder="0" /></div>

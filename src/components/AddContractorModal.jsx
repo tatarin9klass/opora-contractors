@@ -1,9 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
-
-// ТЗ раздел 8.1: в работе только 3 модели оплаты — остальные (CPL, Процент,
-// Смешанная) остаются в справочнике для истории, но скрыты из выбора.
-const ACTIVE_PAYMENT_TYPES = ['Фикс', 'Абонентка', 'Абонентка + бюджет']
+import { ACTIVE_PAYMENT_TYPES } from '../lib/helpers.js'
 
 export default function AddContractorModal({ onClose, onSaved }) {
   const [types, setTypes] = useState([])
