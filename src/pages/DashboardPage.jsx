@@ -1,8 +1,35 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase.js'
 import { formatMoney } from '../lib/helpers.js'
 import { weekStart as getWeekStart, addDaysISO } from '../lib/dateContext.js'
 import SetTargetModal from '../components/SetTargetModal.jsx'
+
+// Список метрик для графика "Динамика по неделям" — объединяет все метрики,
+// которые уже показаны на карточках/в "Дополнительных показателях", plus revenue/aov.
+const CHART_METRICS = [
+  { key: 'spend', label: 'Расход', kind: 'money' },
+  { key: 'leads', label: 'Лиды', kind: 'number' },
+  { key: 'cpl', label: 'CPL', kind: 'money' },
+  { key: 'quals', label: 'Квалы', kind: 'number' },
+  { key: 'cr_lq', label: 'CR(l→q)', kind: 'percent' },
+  { key: 'cpql', label: 'CPQL', kind: 'money' },
+  { key: 'meetings', label: 'Meeting', kind: 'number' },
+  { key: 'cr_qm', label: 'CR(q→m)', kind: 'percent' },
+  { key: 'cpm', label: 'CPM', kind: 'money' },
+  { key: 'deals', label: 'Orders', kind: 'number' },
+  { key: 'cac', label: 'CAC', kind: 'money' },
+  { key: 'cr_lo', label: 'CR(l→o)', kind: 'percent' },
+  { key: 'revenue', label: 'Revenue', kind: 'money' },
+  { key: 'aov', label: 'AOV', kind: 'money' },
+]
+
+function formatByKind(kind, v) {
+  if (v == null) return '—'
+  if (kind === 'money') return formatMoney(v)
+  if (kind === 'percent') return `${v}%`
+  return String(v)
+}
 
 function getISOWeek(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -54,6 +81,7 @@ export default function DashboardPage({ onOpenPassport }) {
   const [showTargetModal, setShowTargetModal] = useState(false)
   const [frozenRows, setFrozenRows] = useState([])
   const [freezing, setFreezing] = useState(false)
+  const [chartMetric, setChartMetric] = useState('leads')
 
   async function load() {
     setLoading(true)
@@ -130,6 +158,25 @@ export default function DashboardPage({ onOpenPassport }) {
     d.setMonth(d.getMonth() + 1)
     return monthKey(d)
   }
+
+  // График "Динамика по неделям" — по всем подрядчикам сразу, независимо от
+  // выбранного режима Месяц/Неделя внизу: один ряд точек на выбранную метрику,
+  // по одной точке на каждую неделю, за которую есть данные в weekly_stats.
+  const weeklySeries = useMemo(() => {
+    const byWeek = {}
+    for (const r of weeklyStats) {
+      if (!r.week_start) continue
+      if (!byWeek[r.week_start]) byWeek[r.week_start] = []
+      byWeek[r.week_start].push(r)
+    }
+    return Object.keys(byWeek).sort().map(week_start => ({
+      week_start,
+      xLabel: new Date(week_start).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
+      ...aggregate(byWeek[week_start]),
+    }))
+  }, [weeklyStats])
+
+  const activeChartMetric = CHART_METRICS.find(m => m.key === chartMetric) || CHART_METRICS[0]
 
   const weekRatioForFreeze = 1 / 4.33
 
@@ -435,6 +482,35 @@ export default function DashboardPage({ onOpenPassport }) {
             </button>
           )}
         </div>
+      </div>
+
+      <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>Динамика по неделям</div>
+          <select className="form-select" style={{ minWidth: 180 }} value={chartMetric} onChange={e => setChartMetric(e.target.value)}>
+            {CHART_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </div>
+        {weeklySeries.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 13 }}>Нет данных</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={weeklySeries} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#dce8d8" />
+              <XAxis dataKey="xLabel" tick={{ fontSize: 11, fill: '#8a9590' }} />
+              <YAxis
+                tick={{ fontSize: 11, fill: '#8a9590' }}
+                width={activeChartMetric.kind === 'money' ? 90 : 50}
+                tickFormatter={v => formatByKind(activeChartMetric.kind, v)}
+              />
+              <Tooltip
+                formatter={v => [formatByKind(activeChartMetric.kind, v), activeChartMetric.label]}
+                labelFormatter={(label, payload) => payload?.[0]?.payload ? weekLabel(payload[0].payload.week_start) : label}
+              />
+              <Line type="monotone" dataKey={chartMetric} stroke="#3A7E34" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 20 }}>

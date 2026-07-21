@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase.js'
 import { getStatusClass, cplClass, cpqlClass, formatMoney, formatDate } from '../lib/helpers.js'
-import { weekStart as getWeekStart } from '../lib/dateContext.js'
+import { weekStart as getWeekStart, todayISO } from '../lib/dateContext.js'
 import AddContractorModal from '../components/AddContractorModal.jsx'
 
 const STATUS_FILTERS = [
@@ -84,15 +85,25 @@ export default function ContractorsPage({ onOpenPassport }) {
   const [showAdd, setShowAdd] = useState(false)
   const [sortKey, setSortKey] = useState(null)
   const [sortDir, setSortDir] = useState('desc') // 'asc' | 'desc'
+  const [dailyFacts, setDailyFacts] = useState([])
+  const [monthlyTarget, setMonthlyTarget] = useState(null)
 
   async function load() {
     setLoading(true)
-    const [{ data }, { data: targetRows }, { data: statsRows }] = await Promise.all([
+    const currentMonth = monthKey()
+    const [{ data }, { data: targetRows }, { data: statsRows }, { data: dailyRows }, { data: mTarget }] = await Promise.all([
       supabase.from('contractor_mtd').select('*'),
       supabase.from('contractor_targets').select('*'),
       supabase.from('weekly_stats').select('*'),
+      // График "Лиды/Квалы/Встречи по дням" — всегда текущий календарный месяц,
+      // независимо от переключателя Месяц/Неделя вверху страницы (план на день
+      // считается только от текущего месяца).
+      supabase.from('daily_facts').select('fact_date, leads, quals, meetings').not('contractor_id', 'is', null).gte('fact_date', currentMonth).lte('fact_date', todayISO()),
+      supabase.from('monthly_targets').select('*').eq('month', currentMonth).maybeSingle(),
     ])
     setRows(data || [])
+    setDailyFacts(dailyRows || [])
+    setMonthlyTarget(mTarget || null)
     const targetsMap = {}
     ;(targetRows || []).forEach(t => { targetsMap[t.contractor_id] = t })
     setTargets(targetsMap)
@@ -151,6 +162,30 @@ export default function ContractorsPage({ onOpenPassport }) {
   }
 
   const periodLabel = mode === 'month' ? monthLabel(selectedMonth) : weekLabel(selectedWeek)
+
+  // График "Лиды/Квалы/Встречи по дням" (текущий месяц, суммарно по всем
+  // подрядчикам) + линия "план на день по квалам" — план на месяц минус уже
+  // полученные квалы, делённый на оставшиеся календарные дни месяца.
+  const dailySeries = useMemo(() => {
+    const byDay = {}
+    for (const r of dailyFacts) {
+      if (!byDay[r.fact_date]) byDay[r.fact_date] = { fact_date: r.fact_date, leads: 0, quals: 0, meetings: 0 }
+      byDay[r.fact_date].leads += r.leads || 0
+      byDay[r.fact_date].quals += r.quals || 0
+      byDay[r.fact_date].meetings += r.meetings || 0
+    }
+    const today = new Date()
+    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+    const remainingDays = daysInMonth - today.getDate()
+    const qualsSoFar = Object.values(byDay).reduce((s, d) => s + d.quals, 0)
+    const qualsRemaining = Math.max(0, (monthlyTarget?.plan_quals || 0) - qualsSoFar)
+    const planPerDay = monthlyTarget?.plan_quals && remainingDays > 0 ? Math.round(qualsRemaining / remainingDays) : null
+    return Object.keys(byDay).sort().map(fact_date => ({
+      ...byDay[fact_date],
+      xLabel: new Date(fact_date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
+      plan_per_day: planPerDay,
+    }))
+  }, [dailyFacts, monthlyTarget])
 
   const SORTABLE_COLUMNS = [
     { key: 'name', label: 'Подрядчик', field: r => (r.short_name || r.name || '').toLowerCase() },
@@ -234,6 +269,29 @@ export default function ContractorsPage({ onOpenPassport }) {
             </select>
           )}
         </div>
+      </div>
+
+      <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 16 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>Лиды, квалы и встречи по дням — {monthLabel(monthKey())}</div>
+        {dailySeries.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 13 }}>Нет данных за текущий месяц</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={dailySeries} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#dce8d8" />
+              <XAxis dataKey="xLabel" tick={{ fontSize: 11, fill: '#8a9590' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#8a9590' }} width={40} />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="leads" name="Лиды" stroke="#8a9590" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="quals" name="Квалы" stroke="#3A7E34" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="meetings" name="Встречи" stroke="#1f3b27" strokeWidth={2} dot={{ r: 3 }} />
+              {dailySeries[0]?.plan_per_day != null && (
+                <Line type="monotone" dataKey="plan_per_day" name="План на день (квалы)" stroke="#d93025" strokeWidth={1.5} strokeDasharray="5 4" dot={false} />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
 
       <div className="kpi-row">
