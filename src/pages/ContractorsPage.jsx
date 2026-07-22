@@ -401,7 +401,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                 </tr>
               </thead>
               <tbody>
-                <tr style={{ background: 'var(--green-bg)', fontWeight: 600 }}>
+                <tr style={{ background: 'var(--green-bg)', fontWeight: 600, borderBottom: '2px solid var(--green-primary)' }}>
                   <td>Итого / Среднее</td>
                   <td>—</td>
                   <td style={{ textAlign: 'right' }}>{formatMoney(totalsFact.spend)}</td>
