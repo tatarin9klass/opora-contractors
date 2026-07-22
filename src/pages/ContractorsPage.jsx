@@ -159,10 +159,10 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     a.revenue += Number(r.revenue) || 0
   })
 
-  function periodFact(contractorId) {
-    const a = periodByContractor[contractorId] || { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0 }
+  // Считает CPL/CPQL/CPM/CAC/CR% из суммарных чисел — та же формула, что и
+  // в aggregate() на дашборде (отношение сумм, а не среднее по строкам).
+  function deriveRates(a) {
     return {
-      ...a,
       cpl: a.leads > 0 ? Math.round(a.spend / a.leads) : null,
       cpql: a.quals > 0 ? Math.round(a.spend / a.quals) : null,
       cpm: a.meetings > 0 ? Math.round(a.spend / a.meetings) : null,
@@ -172,6 +172,25 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
       cr_lo: a.leads > 0 ? Math.round((a.deals / a.leads) * 1000) / 10 : null,
     }
   }
+
+  function periodFact(contractorId) {
+    const a = periodByContractor[contractorId] || { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0 }
+    return { ...a, ...deriveRates(a) }
+  }
+
+  // Итоговая строка таблицы — те же суммарные цифры за период, что и на
+  // дашборде (aggregate(periodRows) по ВСЕМ подрядчикам), а не только по
+  // отфильтрованным строкам этой таблицы.
+  const totalsRaw = periodRows.reduce((acc, r) => {
+    acc.spend += Number(r.spend) || 0
+    acc.leads += r.leads || 0
+    acc.quals += r.quals || 0
+    acc.meetings += r.meetings || 0
+    acc.deals += r.deals || 0
+    acc.revenue += Number(r.revenue) || 0
+    return acc
+  }, { spend: 0, leads: 0, quals: 0, meetings: 0, deals: 0, revenue: 0 })
+  const totalsFact = { ...totalsRaw, ...deriveRates(totalsRaw) }
 
   const periodLabel = mode === 'month' ? monthLabel(selectedMonth) : weekLabel(selectedWeek)
   const paceRatio = periodPaceRatio(mode, mode === 'week' ? selectedWeek : selectedMonth)
@@ -382,6 +401,23 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                 </tr>
               </thead>
               <tbody>
+                <tr style={{ background: 'var(--green-bg)', fontWeight: 600 }}>
+                  <td>Итого / Среднее</td>
+                  <td>—</td>
+                  <td style={{ textAlign: 'right' }}>{formatMoney(totalsFact.spend)}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.leads}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.cpl ? formatMoney(totalsFact.cpl) : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.quals}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.cr_lq != null ? `${totalsFact.cr_lq}%` : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.cpql ? formatMoney(totalsFact.cpql) : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.meetings}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.cpm ? formatMoney(totalsFact.cpm) : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.cr_qm != null ? `${totalsFact.cr_qm}%` : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.deals}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.cac ? formatMoney(totalsFact.cac) : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.cr_lo != null ? `${totalsFact.cr_lo}%` : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.revenue ? formatMoney(totalsFact.revenue) : '—'}</td>
+                </tr>
                 {sortedRows.map(r => {
                   const fact = periodFact(r.contractor_id)
                   return (
