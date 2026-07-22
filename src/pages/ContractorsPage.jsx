@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase.js'
-import { getStatusClass, cplClass, cpqlClass, formatMoney, formatDate } from '../lib/helpers.js'
+import { getStatusClass, cplClass, cpqlClass, cacClass, formatMoney } from '../lib/helpers.js'
 import { weekStart as getWeekStart, todayISO, periodPaceRatio } from '../lib/dateContext.js'
 import AddContractorModal from '../components/AddContractorModal.jsx'
 
@@ -149,21 +149,27 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
   const periodByContractor = {}
   periodRows.forEach(r => {
     if (!r.contractor_id) return
-    if (!periodByContractor[r.contractor_id]) periodByContractor[r.contractor_id] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0 }
+    if (!periodByContractor[r.contractor_id]) periodByContractor[r.contractor_id] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0 }
     const a = periodByContractor[r.contractor_id]
     a.leads += r.leads || 0
     a.quals += r.quals || 0
     a.meetings += r.meetings || 0
     a.deals += r.deals || 0
     a.spend += Number(r.spend) || 0
+    a.revenue += Number(r.revenue) || 0
   })
 
   function periodFact(contractorId) {
-    const a = periodByContractor[contractorId] || { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0 }
+    const a = periodByContractor[contractorId] || { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0 }
     return {
       ...a,
       cpl: a.leads > 0 ? Math.round(a.spend / a.leads) : null,
       cpql: a.quals > 0 ? Math.round(a.spend / a.quals) : null,
+      cpm: a.meetings > 0 ? Math.round(a.spend / a.meetings) : null,
+      cac: a.deals > 0 ? Math.round(a.spend / a.deals) : null,
+      cr_lq: a.leads > 0 ? Math.round((a.quals / a.leads) * 1000) / 10 : null,
+      cr_qm: a.quals > 0 ? Math.round((a.meetings / a.quals) * 1000) / 10 : null,
+      cr_lo: a.leads > 0 ? Math.round((a.deals / a.leads) * 1000) / 10 : null,
     }
   }
 
@@ -196,14 +202,19 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
 
   const SORTABLE_COLUMNS = [
     { key: 'name', label: 'Подрядчик', field: r => (r.short_name || r.name || '').toLowerCase() },
-    { key: 'leads', label: 'Лиды', field: r => periodFact(r.contractor_id).leads },
     { key: 'spend', label: 'Расход', field: r => periodFact(r.contractor_id).spend },
+    { key: 'leads', label: 'Лиды', field: r => periodFact(r.contractor_id).leads },
     { key: 'cpl', label: 'CPL', field: r => periodFact(r.contractor_id).cpl ?? -1 },
     { key: 'quals', label: 'Квалы', field: r => periodFact(r.contractor_id).quals },
+    { key: 'cr_lq', label: 'CR(l→q)', field: r => periodFact(r.contractor_id).cr_lq ?? -1 },
     { key: 'cpql', label: 'CPQL', field: r => periodFact(r.contractor_id).cpql ?? -1 },
     { key: 'meetings', label: 'Встречи', field: r => periodFact(r.contractor_id).meetings },
+    { key: 'cpm', label: 'CPM', field: r => periodFact(r.contractor_id).cpm ?? -1 },
+    { key: 'cr_qm', label: 'CR(q→m)', field: r => periodFact(r.contractor_id).cr_qm ?? -1 },
     { key: 'deals', label: 'Сделки', field: r => periodFact(r.contractor_id).deals },
-    { key: 'updated', label: 'Обновлён', field: r => r.updated_at || '' },
+    { key: 'cac', label: 'CAC', field: r => periodFact(r.contractor_id).cac ?? -1 },
+    { key: 'cr_lo', label: 'CR(l→o)', field: r => periodFact(r.contractor_id).cr_lo ?? -1 },
+    { key: 'revenue', label: 'Revenue', field: r => periodFact(r.contractor_id).revenue },
   ]
 
   const filtered = rows.filter(r => {
@@ -354,7 +365,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
               <p>Измените фильтры или добавьте нового подрядчика</p>
             </div>
           ) : (
-            <table>
+            <table className="table-compact">
               <thead>
                 <tr>
                   {SORTABLE_COLUMNS.slice(0, 1).map(col => (
@@ -362,10 +373,9 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                       {col.label}<SortIcon colKey={col.key} />
                     </th>
                   ))}
-                  <th>Тип</th>
                   <th>Статус</th>
                   {SORTABLE_COLUMNS.slice(1).map(col => (
-                    <th key={col.key} onClick={() => toggleSort(col.key)} style={{ cursor: 'pointer', userSelect: 'none', textAlign: col.key === 'updated' ? 'left' : 'right' }}>
+                    <th key={col.key} onClick={() => toggleSort(col.key)} style={{ cursor: 'pointer', userSelect: 'none', textAlign: 'right' }}>
                       {col.label}<SortIcon colKey={col.key} />
                     </th>
                   ))}
@@ -382,20 +392,28 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                           <span title="Отклонение >20% от плана за период" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', marginLeft: 7, verticalAlign: 'middle' }} />
                         )}
                       </td>
-                      <td className="td-muted">{r.type || '—'}</td>
                       <td><span className={`badge ${getStatusClass(r.status)}`}>{r.status}</span></td>
-                      <td style={{ textAlign: 'right' }} className="metric">{fact.leads || 0}</td>
                       <td style={{ textAlign: 'right' }}>{formatMoney(fact.spend)}</td>
+                      <td style={{ textAlign: 'right' }} className="metric">{fact.leads || 0}</td>
                       <td style={{ textAlign: 'right' }}>
                         <span className={`metric ${cplClass(fact.cpl)}`}>{fact.cpl ? formatMoney(fact.cpl) : '—'}</span>
                       </td>
                       <td style={{ textAlign: 'right' }} className="metric">{fact.quals || 0}</td>
+                      <td style={{ textAlign: 'right' }} className="td-muted">{fact.cr_lq != null ? `${fact.cr_lq}%` : '—'}</td>
                       <td style={{ textAlign: 'right' }}>
                         <span className={`metric ${cpqlClass(fact.cpql)}`}>{fact.cpql ? formatMoney(fact.cpql) : '—'}</span>
                       </td>
                       <td style={{ textAlign: 'right' }} className="metric">{fact.meetings || 0}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span className="metric">{fact.cpm ? formatMoney(fact.cpm) : '—'}</span>
+                      </td>
+                      <td style={{ textAlign: 'right' }} className="td-muted">{fact.cr_qm != null ? `${fact.cr_qm}%` : '—'}</td>
                       <td style={{ textAlign: 'right' }} className="metric">{fact.deals || 0}</td>
-                      <td className="td-muted" style={{ fontSize: 11 }}>{formatDate(r.updated_at)}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span className={`metric ${cacClass(fact.cac)}`}>{fact.cac ? formatMoney(fact.cac) : '—'}</span>
+                      </td>
+                      <td style={{ textAlign: 'right' }} className="td-muted">{fact.cr_lo != null ? `${fact.cr_lo}%` : '—'}</td>
+                      <td style={{ textAlign: 'right' }}>{fact.revenue ? formatMoney(fact.revenue) : '—'}</td>
                     </tr>
                   )
                 })}

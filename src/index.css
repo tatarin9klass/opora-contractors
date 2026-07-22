@@ -173,6 +173,11 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 .td-muted { color: var(--text-muted); }
 .td-mono { font-family: monospace; font-size: 12px; }
 
+/* Более узкая версия таблицы для широких наборов колонок (напр. таблица
+   подрядчиков с конверсиями) — чтобы всё помещалось без горизонтальной прокрутки. */
+.table-compact thead th { padding: 7px 8px; font-size: 10px; }
+.table-compact tbody td { padding: 7px 8px; font-size: 12px; }
+
 /* Metric cells */
 .metric { font-weight: 600; }
 .metric-ok { color: var(--green-primary); }
