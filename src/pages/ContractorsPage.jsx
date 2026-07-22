@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase.js'
 import { getStatusClass, cplClass, cpqlClass, formatMoney, formatDate } from '../lib/helpers.js'
-import { weekStart as getWeekStart, todayISO } from '../lib/dateContext.js'
+import { weekStart as getWeekStart, todayISO, periodPaceRatio } from '../lib/dateContext.js'
 import AddContractorModal from '../components/AddContractorModal.jsx'
 
 const STATUS_FILTERS = [
@@ -50,7 +50,11 @@ const DEVIATION_COST_METRICS = new Set(['spend'])
 const DEVIATION_THRESHOLD = 0.2
 const WEEK_RATIO = 1 / 4.33
 
-function hasDeviationAlert(fact, target, mode) {
+// paceRatio — доля текущей недели/месяца, которая уже прошла (1 для уже
+// завершившегося периода) — план сравнивается не с целым периодом, а с тем,
+// что должно было накопиться к сегодняшнему дню, иначе 1 числа месяца план
+// всегда выглядит проваленным.
+function hasDeviationAlert(fact, target, mode, paceRatio) {
   if (!target) return false
   const pairs = [
     ['spend', fact.spend, target.plan_spend],
@@ -61,7 +65,9 @@ function hasDeviationAlert(fact, target, mode) {
   ]
   return pairs.some(([key, factVal, planRaw]) => {
     if (planRaw == null) return false
-    const planPeriod = mode === 'week' ? planRaw * WEEK_RATIO : planRaw
+    const planPeriodFull = mode === 'week' ? planRaw * WEEK_RATIO : planRaw
+    if (!planPeriodFull) return false
+    const planPeriod = planPeriodFull * paceRatio
     if (!planPeriod) return false
     const dev = ((factVal || 0) - planPeriod) / planPeriod
     return DEVIATION_COST_METRICS.has(key) ? dev > DEVIATION_THRESHOLD : dev < -DEVIATION_THRESHOLD
@@ -162,6 +168,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
   }
 
   const periodLabel = mode === 'month' ? monthLabel(selectedMonth) : weekLabel(selectedWeek)
+  const paceRatio = periodPaceRatio(mode, mode === 'week' ? selectedWeek : selectedMonth)
 
   // График "Лиды/Квалы/Встречи по дням" (текущий месяц, суммарно по всем
   // подрядчикам) + линия "план на день по квалам" — план на месяц минус уже
@@ -229,7 +236,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
 
   const activeCount = rows.filter(r => r.is_active).length
   const testCount = rows.filter(r => r.status === 'Тест').length
-  const alertCount = rows.filter(r => r.is_active && hasDeviationAlert(periodFact(r.contractor_id), targets[r.contractor_id], mode)).length
+  const alertCount = rows.filter(r => r.is_active && hasDeviationAlert(periodFact(r.contractor_id), targets[r.contractor_id], mode, paceRatio)).length
 
   function SortIcon({ colKey }) {
     if (sortKey !== colKey) return <span style={{ opacity: 0.25, marginLeft: 4 }}>↕</span>
@@ -371,7 +378,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                     <tr key={r.contractor_id}>
                       <td>
                         <span className="td-name" onClick={() => onOpenPassport(r.contractor_id)}>{r.short_name || r.name}</span>
-                        {hasDeviationAlert(fact, targets[r.contractor_id], mode) && (
+                        {hasDeviationAlert(fact, targets[r.contractor_id], mode, paceRatio) && (
                           <span title="Отклонение >20% от плана за период" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', marginLeft: 7, verticalAlign: 'middle' }} />
                         )}
                       </td>

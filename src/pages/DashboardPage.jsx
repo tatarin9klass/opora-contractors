@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase.js'
 import { formatMoney } from '../lib/helpers.js'
-import { weekStart as getWeekStart, addDaysISO } from '../lib/dateContext.js'
+import { weekStart as getWeekStart, addDaysISO, periodPaceRatio } from '../lib/dateContext.js'
 import SetTargetModal from '../components/SetTargetModal.jsx'
 
 // Список метрик для графика "Динамика по неделям" — объединяет все метрики,
@@ -337,6 +337,20 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
 
   const weekRatio = 1 / 4.33
   const BASE_PLAN_KEYS = ['spend', 'leads', 'quals', 'meetings', 'deals']
+  const CUMULATIVE_KEYS = new Set([...BASE_PLAN_KEYS, 'revenue'])
+
+  // Темп периода (какая доля недели/месяца уже прошла на сегодня) — только
+  // для ТЕКУЩЕГО периода, для уже прошедшего/замороженного periodPaceRatio
+  // сам вернёт 1 (план целиком). Нужен, чтобы 1 числа месяца план не был
+  // сразу красным — подсветка сравнивает факт не с планом на весь период,
+  // а с "ожидаемым к сегодняшнему дню" планом. Применяется только к
+  // накопительным метрикам (лиды/квалы/расход и т.д.) — ставки/конверсии
+  // (CPL, CAC, CR...) от темпа не зависят, план на них не прорируется.
+  const paceRatio = isFrozen ? 1 : periodPaceRatio(mode, mode === 'week' ? selectedWeek : selectedMonth)
+  function colorPlanFor(key, fullPlan) {
+    if (fullPlan == null) return null
+    return CUMULATIVE_KEYS.has(key) ? fullPlan * paceRatio : fullPlan
+  }
 
   // Только 5 базовых метрик хранятся в target (ТЗ раздел 5.1) — плановые значения
   // производных метрик (CPL/CPQL/CAC/CR) считаются из них теми же формулами,
@@ -415,7 +429,12 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
     for (const key of BASE_PLAN_KEYS) {
       const planRaw = t[`plan_${key}`]
       if (planRaw == null) continue
-      const planPeriod = isFrozen ? planRaw : (mode === 'week' ? planRaw * weekRatio : planRaw)
+      const planPeriodFull = isFrozen ? planRaw : (mode === 'week' ? planRaw * weekRatio : planRaw)
+      if (!planPeriodFull) continue
+      // Сравниваем не с планом на весь период, а с "ожидаемым к сегодня" —
+      // planPeriodFull, приведённый темпом текущего дня недели/месяца
+      // (paceRatio = 1 для замороженных и для уже завершившихся периодов).
+      const planPeriod = planPeriodFull * paceRatio
       if (!planPeriod) continue
       const factVal = f[key] || 0
       const dev = (factVal - planPeriod) / planPeriod
@@ -590,7 +609,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
           const p = planVal(card.key)
           const f = card.factRaw
           const pctVal = pct(f, p)
-          const devColor = deviationColor(card.key, f, p)
+          const devColor = deviationColor(card.key, f, colorPlanFor(card.key, p))
           const devStr = fmtDev(f, p, card.format)
           return (
             <div key={card.label} style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '16px 14px' }}>
@@ -626,7 +645,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
                 const p = planVal(row.key)
                 const f = row.factRaw
                 const pctVal = pct(f, p)
-                const devColor = deviationColor(row.key, f, p)
+                const devColor = deviationColor(row.key, f, colorPlanFor(row.key, p))
                 const devStr = fmtDev(f, p, row.format)
                 return (
                   <tr key={row.label} style={{ borderBottom: '1px solid var(--border-light)' }}>
