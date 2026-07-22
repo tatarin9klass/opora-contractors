@@ -83,3 +83,33 @@ export function computeDateContext(referenceDate = new Date()) {
     previousWeekDays,
   }
 }
+
+// Сколько календарных дней прошло от fromISO до toISO (может быть отрицательным).
+export function daysBetweenISO(fromISO, toISO) {
+  return Math.round((anchor(toISO) - anchor(fromISO)) / 86400000)
+}
+
+// Доля периода (недели чт-ср или месяца), которая уже прошла на referenceDate —
+// используется, чтобы план дашборда сравнивался с фактом "по темпу", а не с
+// планом на весь период целиком (иначе 1 числа месяца план всегда красный).
+// periodStart — четверг недели (для mode='week') или первое число месяца
+// (для mode='month'), в формате YYYY-MM-DD.
+// Для уже полностью прошедшего периода возвращает 1 (план целиком) — темп
+// имеет смысл только для ТЕКУЩЕГО, ещё идущего периода.
+export function periodPaceRatio(mode, periodStart, referenceDate = new Date()) {
+  const todayStr = todayISO(referenceDate)
+  if (mode === 'week') {
+    const weekEnd = addDaysISO(periodStart, 6)
+    if (todayStr < periodStart) return 0
+    if (todayStr > weekEnd) return 1
+    const elapsed = daysBetweenISO(periodStart, todayStr) + 1
+    return Math.min(elapsed, 7) / 7
+  }
+  const [y, m] = periodStart.split('-').map(Number)
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  const monthEnd = `${periodStart.slice(0, 8)}${String(daysInMonth).padStart(2, '0')}`
+  if (todayStr < periodStart) return 0
+  if (todayStr > monthEnd) return 1
+  const dayOfMonth = daysBetweenISO(periodStart, todayStr) + 1
+  return Math.min(dayOfMonth, daysInMonth) / daysInMonth
+}
