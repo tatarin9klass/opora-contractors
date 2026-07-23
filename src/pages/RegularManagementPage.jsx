@@ -5,9 +5,9 @@ import { periodPaceRatio } from '../lib/dateContext.js'
 
 // Компания целиком, по неделям, план vs факт по всем метрикам сразу — как в
 // таблице "Регулярный менеджмент", которую вели раньше вручную. Каждая
-// метрика — 2-3 строки (План/Факт + % выполнения или отклонение), недели —
-// столбцы. Первый столбец (название метрики) и шапка (номера недель)
-// закреплены, как при заморозке областей в Excel/Google Sheets.
+// метрика — ровно 3 строки (отклонение / План / Факт), недели — столбцы.
+// Первый столбец (название метрики) и шапка (номера недель) закреплены, как
+// при заморозке областей в Excel/Google Sheets.
 
 const WEEK_RATIO = 1 / 4.33
 
@@ -24,8 +24,8 @@ function monthKeyOf(dateStr) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
 }
 
-// Считает CPL/CPQL/CPM/CAC/CR% из суммарных чисел — та же формула, что и на
-// дашборде (отношение сумм, не среднее по строкам).
+// Считает CPL/CPQL/CPM/CAC/CR%/AOV из суммарных чисел — та же формула, что и
+// на дашборде (отношение сумм, не среднее по строкам).
 function deriveRates(a) {
   return {
     cpl: a.leads > 0 ? Math.round(a.spend / a.leads) : null,
@@ -39,24 +39,54 @@ function deriveRates(a) {
   }
 }
 
-// count/money-метрики: "хорошо" — если факт >= план (расход наоборот, см. COST_METRICS).
-const COST_METRICS = new Set(['spend', 'cpl', 'cpql', 'cpm', 'cac'])
+// kind определяет формат строки отклонения: count → "% выполнения",
+// rate → "< / > на N ₽", ratio → разница в п.п. goodWhen — куда должен
+// отклоняться факт, чтобы это было хорошо (расход и стоимостные метрики —
+// "lower", всё остальное, включая AOV, — "higher").
 const METRIC_GROUPS = [
-  { key: 'spend', label: 'Расход', format: formatMoney, kind: 'count' },
-  { key: 'leads', label: 'Лиды', format: v => String(v), kind: 'count' },
-  { key: 'cpl', label: 'CPL', format: formatMoney, kind: 'rate' },
-  { key: 'quals', label: 'Квалы', format: v => String(v), kind: 'count' },
-  { key: 'cr_lq', label: 'CR(l→q)', format: v => `${v}%`, kind: 'ratio' },
-  { key: 'cpql', label: 'CPQL', format: formatMoney, kind: 'rate' },
-  { key: 'meetings', label: 'Встречи', format: v => String(v), kind: 'count' },
-  { key: 'cpm', label: 'CPM', format: formatMoney, kind: 'rate' },
-  { key: 'cr_qm', label: 'CR(q→m)', format: v => `${v}%`, kind: 'ratio' },
-  { key: 'deals', label: 'Сделки', format: v => String(v), kind: 'count' },
-  { key: 'cac', label: 'CAC', format: formatMoney, kind: 'rate' },
-  { key: 'cr_lo', label: 'CR(l→o)', format: v => `${v}%`, kind: 'ratio' },
-  { key: 'revenue', label: 'Revenue', format: formatMoney, kind: 'count' },
-  { key: 'aov', label: 'AOV', format: formatMoney, kind: 'fact_only' },
+  { key: 'spend', label: 'Расход', format: formatMoney, kind: 'count', goodWhen: 'lower' },
+  { key: 'leads', label: 'Лиды', format: v => String(v), kind: 'count', goodWhen: 'higher' },
+  { key: 'cpl', label: 'CPL', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
+  { key: 'quals', label: 'Квалы', format: v => String(v), kind: 'count', goodWhen: 'higher' },
+  { key: 'cr_lq', label: 'CR(l→q)', format: v => `${v}%`, kind: 'ratio', goodWhen: 'higher' },
+  { key: 'cpql', label: 'CPQL', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
+  { key: 'meetings', label: 'Встречи', format: v => String(v), kind: 'count', goodWhen: 'higher' },
+  { key: 'cpm', label: 'CPM', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
+  { key: 'cr_qm', label: 'CR(q→m)', format: v => `${v}%`, kind: 'ratio', goodWhen: 'higher' },
+  { key: 'deals', label: 'Сделки', format: v => String(v), kind: 'count', goodWhen: 'higher' },
+  { key: 'cac', label: 'CAC', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
+  { key: 'cr_lo', label: 'CR(l→o)', format: v => `${v}%`, kind: 'ratio', goodWhen: 'higher' },
+  { key: 'revenue', label: 'Revenue', format: formatMoney, kind: 'count', goodWhen: 'higher' },
+  { key: 'aov', label: 'AOV', format: formatMoney, kind: 'rate', goodWhen: 'higher' },
 ]
+
+// Ячейка строки отклонения — единая логика для всех трёх видов метрик.
+function DeviationCell({ m, fact, plan }) {
+  if (fact == null || plan == null) return <td className="td-muted">—</td>
+  if (m.kind === 'count') {
+    if (!plan) return <td className="td-muted">—</td>
+    const pct = Math.round((fact / plan) * 100)
+    const good = m.goodWhen === 'lower' ? fact <= plan : fact >= plan
+    return <td style={{ fontWeight: 700, color: good ? 'var(--green-primary)' : 'var(--red)' }}>{pct}%</td>
+  }
+  if (m.kind === 'rate') {
+    const diff = fact - plan
+    const good = m.goodWhen === 'lower' ? diff <= 0 : diff >= 0
+    return (
+      <td style={{ fontWeight: 700, color: good ? 'var(--green-primary)' : 'var(--red)' }}>
+        {diff <= 0 ? '<' : '>'} на {formatMoney(Math.abs(diff))}
+      </td>
+    )
+  }
+  // ratio — разница в процентных пунктах
+  const diff = Math.round((fact - plan) * 10) / 10
+  const good = m.goodWhen === 'lower' ? diff <= 0 : diff >= 0
+  return (
+    <td style={{ fontWeight: 700, color: good ? 'var(--green-primary)' : 'var(--red)' }}>
+      {diff > 0 ? '+' : ''}{diff}%
+    </td>
+  )
+}
 
 export default function RegularManagementPage() {
   const [loading, setLoading] = useState(true)
@@ -124,6 +154,7 @@ export default function RegularManagementPage() {
           cr_lq: planRaw.leads > 0 ? Math.round((planRaw.quals / planRaw.leads) * 1000) / 10 : null,
           cr_qm: planRaw.quals > 0 ? Math.round((planRaw.meetings / planRaw.quals) * 1000) / 10 : null,
           cr_lo: planRaw.leads > 0 ? Math.round((planRaw.deals / planRaw.leads) * 1000) / 10 : null,
+          aov: planRaw.deals > 0 ? Math.round(planRaw.revenue / planRaw.deals) : null,
         }
         return { week_start, fact, plan: { ...planCounts, ...planRates } }
       })
@@ -159,53 +190,26 @@ export default function RegularManagementPage() {
                 <React.Fragment key={m.key}>
                   <tr>
                     <td className="regmgmt-label-col" style={{ fontWeight: 700 }}>
-                      {m.label}{m.kind === 'count' ? ' % выполнения' : m.kind === 'rate' ? ' отклонение' : ''}
+                      {m.label}
+                      <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 11 }}>
+                        {' '}{m.kind === 'count' ? '% выполнения' : 'отклонение'}
+                      </span>
                     </td>
-                    {weekCols.map(c => {
-                      const f = c.fact[m.key]
-                      const p = c.plan[m.key]
-                      if (m.kind === 'fact_only') return <td key={c.week_start} />
-                      if (m.kind === 'ratio') return <td key={c.week_start} />
-                      if (p == null || f == null) return <td key={c.week_start} className="td-muted">—</td>
-                      if (m.kind === 'count') {
-                        if (!p) return <td key={c.week_start} className="td-muted">—</td>
-                        const pct = Math.round((f / p) * 100)
-                        const good = COST_METRICS.has(m.key) ? f <= p : f >= p
-                        return <td key={c.week_start} style={{ fontWeight: 700, color: good ? 'var(--green-primary)' : 'var(--red)' }}>{pct}%</td>
-                      }
-                      // rate: "< на N" (дешевле плана, хорошо) / "> на N" (дороже плана, плохо)
-                      const diff = f - p
-                      const good = diff <= 0
-                      return (
-                        <td key={c.week_start} style={{ fontWeight: 700, color: good ? 'var(--green-primary)' : 'var(--red)' }}>
-                          {good ? '<' : '>'} на {formatMoney(Math.abs(diff))}
-                        </td>
-                      )
-                    })}
+                    {weekCols.map(c => (
+                      <DeviationCell key={c.week_start} m={m} fact={c.fact[m.key]} plan={c.plan[m.key]} />
+                    ))}
                   </tr>
-                  {m.kind !== 'fact_only' && (
-                    <tr>
-                      <td className="regmgmt-label-col td-muted">План</td>
-                      {weekCols.map(c => (
-                        <td key={c.week_start} className="td-muted">{c.plan[m.key] != null ? m.format(c.plan[m.key]) : '—'}</td>
-                      ))}
-                    </tr>
-                  )}
                   <tr>
-                    <td className="regmgmt-label-col td-muted">Факт</td>
-                    {weekCols.map(c => {
-                      const f = c.fact[m.key]
-                      if (m.kind === 'ratio') {
-                        const p = c.plan[m.key]
-                        const good = p == null || f == null ? null : f >= p
-                        return (
-                          <td key={c.week_start} style={{ fontWeight: 600, color: good == null ? 'var(--text)' : good ? 'var(--green-primary)' : 'var(--red)' }}>
-                            {f != null ? m.format(f) : '—'}
-                          </td>
-                        )
-                      }
-                      return <td key={c.week_start}>{f != null ? m.format(f) : '—'}</td>
-                    })}
+                    <td className="regmgmt-label-col td-muted">План</td>
+                    {weekCols.map(c => (
+                      <td key={c.week_start} className="td-muted">{c.plan[m.key] != null ? m.format(c.plan[m.key]) : '—'}</td>
+                    ))}
+                  </tr>
+                  <tr className="regmgmt-group-end">
+                    <td className="regmgmt-label-col" style={{ fontWeight: 600 }}>Факт</td>
+                    {weekCols.map(c => (
+                      <td key={c.week_start} style={{ fontWeight: 600 }}>{c.fact[m.key] != null ? m.format(c.fact[m.key]) : '—'}</td>
+                    ))}
                   </tr>
                 </React.Fragment>
               ))}

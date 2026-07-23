@@ -200,6 +200,8 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
   background: var(--white); text-align: left; min-width: 200px;
 }
 .regmgmt-table thead th.regmgmt-label-col { z-index: 3; background: var(--bg); }
+/* Разделитель между блоками метрик — толще и темнее обычной строчной границы. */
+.regmgmt-table tr.regmgmt-group-end td { border-bottom: 2px solid var(--border); }
 .table-compact tbody td { padding: 7px 8px; font-size: 12px; }
 
 /* Metric cells */
