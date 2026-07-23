@@ -118,6 +118,12 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     setWeeklyStats(stats)
     const weeks = [...new Set(stats.map(w => w.week_start))].sort((a, b) => b.localeCompare(a))
     setAvailableWeeks(weeks)
+    // Текущая (по датам) неделя может ещё не иметь данных (например, только
+    // что началась) — тогда её нет в списке доступных недель. Раньше select
+    // в этом случае визуально показывал первую недель из списка, а реальный
+    // выбор (selectedWeek) молча оставался на пустой текущей неделе — цифры
+    // были нулевыми, хотя выглядело как будто выбрана нормальная неделя.
+    if (weeks.length > 0 && !weeks.includes(selectedWeek)) setSelectedWeek(weeks[0])
     const now = new Date()
     const futureMonths = [0, 1, 2].map(offset => monthKey(new Date(now.getFullYear(), now.getMonth() + offset, 1)))
     const months = [...new Set([...futureMonths, ...weeks.map(w => monthKey(new Date(w)))])].sort((a, b) => b.localeCompare(a))

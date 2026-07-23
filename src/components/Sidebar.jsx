@@ -4,7 +4,7 @@ export default function Sidebar({ page, setPage, isAdmin }) {
   const items = [
     { id: 'dashboard', icon: '📊', label: 'Дашборд' },
     { id: 'contractors', icon: '🤝', label: 'Подрядчики' },
-    { id: 'regmgmt', icon: '📅', label: 'Регулярный менеджмент' },
+    { id: 'regmgmt', icon: '📅', label: 'РМ' },
     // Чисто write-инструменты — не нужны роли "просмотр", у которой всё
     // равно нет прав ничего туда записать.
     ...(isAdmin ? [

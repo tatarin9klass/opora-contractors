@@ -143,6 +143,11 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
 
     const weeks = [...new Set(stats.map(w => w.week_start))].sort((a, b) => b.localeCompare(a))
     setAvailableWeeks(weeks)
+    // Текущая неделя может ещё не иметь данных (только началась) — тогда её
+    // нет в списке доступных недель, а select молча остаётся на пустой
+    // неделе (цифры нулевые), хотя визуально может выглядеть как выбрана
+    // последняя нормальная неделя. Переключаемся на последнюю с данными.
+    if (weeks.length > 0 && !weeks.includes(selectedWeek)) setSelectedWeek(weeks[0])
 
     const now = new Date()
     const futureMonths = [0, 1, 2].map(offset => monthKey(new Date(now.getFullYear(), now.getMonth() + offset, 1)))

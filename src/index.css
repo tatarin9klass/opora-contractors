@@ -188,7 +188,8 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 .regmgmt-table { width: auto; border-collapse: separate; border-spacing: 0; }
 .regmgmt-table th, .regmgmt-table td {
   padding: 9px 16px; font-size: 13px; white-space: nowrap;
-  border-bottom: 1px solid var(--border-light); text-align: right; min-width: 100px;
+  border-bottom: 1px solid var(--border-light); border-right: 1px solid var(--border-light);
+  text-align: right; min-width: 100px;
 }
 .regmgmt-table thead th {
   position: sticky; top: 0; z-index: 2;
