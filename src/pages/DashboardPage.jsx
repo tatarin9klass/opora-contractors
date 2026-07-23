@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase.js'
 import { formatMoney } from '../lib/helpers.js'
-import { weekStart as getWeekStart, addDaysISO, periodPaceRatio } from '../lib/dateContext.js'
+import { weekStart as getWeekStart, addDaysISO, periodPaceRatio, weeklyPlanFromMonthly } from '../lib/dateContext.js'
 import SetTargetModal from '../components/SetTargetModal.jsx'
 
 // Список метрик для графика "Динамика по неделям" — объединяет все метрики,
@@ -77,6 +77,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
   const [contractors, setContractors] = useState([])
   const [contractorTargets, setContractorTargets] = useState({})
   const [target, setTarget] = useState(null)
+  const [allTargets, setAllTargets] = useState([])
   const [availableWeeks, setAvailableWeeks] = useState([])
   const [availableMonths, setAvailableMonths] = useState([])
   const [loading, setLoading] = useState(true)
@@ -104,7 +105,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
 
   async function load() {
     setLoading(true)
-    const [statsRes, contractorsRes, targetsRes, historicalRes] = await Promise.all([
+    const [statsRes, contractorsRes, targetsRes, historicalRes, allTargetsRes] = await Promise.all([
       // ИСТОЧНИК ПРАВДЫ: weekly_stats (daily_facts + weekly_expenses), не weekly_facts
       supabase.from('weekly_stats').select('*, contractors(id, name, short_name, contractor_statuses(name, is_active))'),
       supabase.from('contractor_mtd').select('*'),
@@ -115,7 +116,12 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
       // per-контрактор проверки (Зоны внимания, Нет данных, заморозка) их
       // просто игнорируют — участвуют только в agregate()/графике.
       supabase.from('dashboard_historical_weeks').select('*'),
+      // Все месячные планы сразу (не только выбранный месяц) — нужно, чтобы
+      // считать план на неделю по дням, когда она приходится на стык двух
+      // месяцев с разными планами (см. basePlanVal).
+      supabase.from('monthly_targets').select('*'),
     ])
+    setAllTargets(allTargetsRes.data || [])
     const historicalStats = (historicalRes.data || []).map(h => ({
       contractor_id: null,
       week_start: h.week_start,
@@ -340,7 +346,6 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
 
   const fact = aggregate(periodRows)
 
-  const weekRatio = 1 / 4.33
   const BASE_PLAN_KEYS = ['spend', 'leads', 'quals', 'meetings', 'deals']
   const CUMULATIVE_KEYS = new Set([...BASE_PLAN_KEYS, 'revenue'])
 
@@ -360,11 +365,21 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
   // Только 5 базовых метрик хранятся в target (ТЗ раздел 5.1) — плановые значения
   // производных метрик (CPL/CPQL/CAC/CR) считаются из них теми же формулами,
   // что и факт в aggregate(), а не читаются из отдельных колонок.
+  // В режиме "неделя" план считается по дням выбранной недели (см.
+  // weeklyPlanFromMonthly) — если неделя приходится на стык двух месяцев с
+  // разными планами, оба месячных плана "смешиваются" пропорционально дням,
+  // вместо грубого деления одного месяца на константу 1/4.33.
+  function rawPlanVal(field) {
+    if (mode === 'week') {
+      const byMonth = {}
+      for (const t of allTargets) byMonth[t.month] = t[`plan_${field}`]
+      return weeklyPlanFromMonthly(selectedWeek, byMonth)
+    }
+    return target?.[`plan_${field}`] ?? null
+  }
+
   function basePlanVal(key) {
-    if (!target) return null
-    const v = target[`plan_${key}`]
-    if (v == null) return null
-    return mode === 'week' ? v * weekRatio : v
+    return rawPlanVal(key)
   }
 
   function planVal(key) {
@@ -390,13 +405,12 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
     // средний чек сделки не вывести из spend/leads/quals/meetings/deals,
     // поэтому план revenue вводится отдельно (monthly_targets.plan_revenue).
     if (key === 'revenue') {
-      if (!target || target.plan_revenue == null) return null
-      const v = mode === 'week' ? target.plan_revenue * weekRatio : target.plan_revenue
-      return Math.round(v)
+      const v = rawPlanVal('revenue')
+      return v == null ? null : Math.round(v)
     }
     if (key === 'aov') {
-      if (!target || target.plan_revenue == null || !deals) return null
-      const revenuePlan = mode === 'week' ? target.plan_revenue * weekRatio : target.plan_revenue
+      const revenuePlan = rawPlanVal('revenue')
+      if (revenuePlan == null || !deals) return null
       return Math.round(revenuePlan / deals)
     }
     return null
@@ -416,6 +430,10 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
   const BASE_METRIC_LABELS = { spend: 'Расход', leads: 'Лиды', quals: 'Квалы', meetings: 'Встречи', deals: 'Сделки' }
   const COST_METRICS = new Set(['spend'])
   const DEVIATION_THRESHOLD = 0.2
+  // Личный план подрядчика (contractor_targets) — не привязан к месяцам, в
+  // отличие от общекомпанейского monthly_targets, поэтому здесь по-прежнему
+  // используется усреднённый коэффициент, а не разбивка по дням/месяцам.
+  const CONTRACTOR_WEEK_RATIO = 1 / 4.33
 
   function formatMetricVal(key, v) {
     return key === 'spend' ? formatMoney(v) : String(Math.round(v))
@@ -434,7 +452,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
     for (const key of BASE_PLAN_KEYS) {
       const planRaw = t[`plan_${key}`]
       if (planRaw == null) continue
-      const planPeriodFull = isFrozen ? planRaw : (mode === 'week' ? planRaw * weekRatio : planRaw)
+      const planPeriodFull = isFrozen ? planRaw : (mode === 'week' ? planRaw * CONTRACTOR_WEEK_RATIO : planRaw)
       if (!planPeriodFull) continue
       // Сравниваем не с планом на весь период, а с "ожидаемым к сегодня" —
       // planPeriodFull, приведённый темпом текущего дня недели/месяца

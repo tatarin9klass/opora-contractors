@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { formatMoney } from '../lib/helpers.js'
-import { periodPaceRatio } from '../lib/dateContext.js'
+import { periodPaceRatio, weeklyPlanFromMonthly } from '../lib/dateContext.js'
 
 // Компания целиком, по неделям, план vs факт по всем метрикам сразу — как в
 // таблице "Регулярный менеджмент", которую вели раньше вручную. Каждая
@@ -9,19 +9,12 @@ import { periodPaceRatio } from '../lib/dateContext.js'
 // Первый столбец (название метрики) и шапка (номера недель) закреплены, как
 // при заморозке областей в Excel/Google Sheets.
 
-const WEEK_RATIO = 1 / 4.33
-
 function getISOWeek(dateStr) {
   const d = new Date(`${dateStr}T12:00:00Z`)
   const dayNum = d.getUTCDay() || 7
   d.setUTCDate(d.getUTCDate() + 4 - dayNum)
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
   return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
-}
-
-function monthKeyOf(dateStr) {
-  const d = new Date(dateStr)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
 }
 
 // Считает CPL/CPQL/CPM/CAC/CR%/AOV из суммарных чисел — та же формула, что и
@@ -125,18 +118,26 @@ export default function RegularManagementPage() {
       const targetsByMonth = {}
       for (const t of targets || []) targetsByMonth[t.month] = t
 
+      // План на неделю по одному показателю — с учётом недель на стыке
+      // месяцев с разными планами (см. weeklyPlanFromMonthly).
+      function weekPlanField(week_start, field) {
+        const byMonth = {}
+        for (const mKey in targetsByMonth) byMonth[mKey] = targetsByMonth[mKey][`plan_${field}`]
+        return weeklyPlanFromMonthly(week_start, byMonth)
+      }
+
       const weeks = Object.keys(byWeek).sort()
       const cols = weeks.map(week_start => {
         const fact = { ...byWeek[week_start], ...deriveRates(byWeek[week_start]) }
-        const t = targetsByMonth[monthKeyOf(week_start)]
         const paceRatio = periodPaceRatio('week', week_start)
+        const applyPace = v => (v == null ? null : v * paceRatio)
         const planRaw = {
-          spend: t?.plan_spend != null ? t.plan_spend * WEEK_RATIO * paceRatio : null,
-          leads: t?.plan_leads != null ? t.plan_leads * WEEK_RATIO * paceRatio : null,
-          quals: t?.plan_quals != null ? t.plan_quals * WEEK_RATIO * paceRatio : null,
-          meetings: t?.plan_meetings != null ? t.plan_meetings * WEEK_RATIO * paceRatio : null,
-          deals: t?.plan_deals != null ? t.plan_deals * WEEK_RATIO * paceRatio : null,
-          revenue: t?.plan_revenue != null ? t.plan_revenue * WEEK_RATIO * paceRatio : null,
+          spend: applyPace(weekPlanField(week_start, 'spend')),
+          leads: applyPace(weekPlanField(week_start, 'leads')),
+          quals: applyPace(weekPlanField(week_start, 'quals')),
+          meetings: applyPace(weekPlanField(week_start, 'meetings')),
+          deals: applyPace(weekPlanField(week_start, 'deals')),
+          revenue: applyPace(weekPlanField(week_start, 'revenue')),
         }
         const planCounts = {
           spend: planRaw.spend != null ? Math.round(planRaw.spend) : null,

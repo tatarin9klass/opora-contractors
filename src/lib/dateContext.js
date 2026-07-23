@@ -96,6 +96,42 @@ export function daysBetweenISO(fromISO, toISO) {
 // (для mode='month'), в формате YYYY-MM-DD.
 // Для уже полностью прошедшего периода возвращает 1 (план целиком) — темп
 // имеет смысл только для ТЕКУЩЕГО, ещё идущего периода.
+// Сколько дней недели (чт-ср, 7 дней) попадает в каждый календарный месяц —
+// нужно, чтобы посчитать план на неделю по фактическим дням, а не константой
+// 1/4.33, когда неделя приходится на стык двух месяцев с разными планами.
+export function weekMonthSplit(weekStart) {
+  const byMonth = {}
+  for (let i = 0; i < 7; i++) {
+    const d = addDaysISO(weekStart, i)
+    const mKey = `${d.slice(0, 7)}-01`
+    if (!byMonth[mKey]) {
+      const [y, m] = mKey.split('-').map(Number)
+      const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate()
+      byMonth[mKey] = { days: 0, daysInMonth }
+    }
+    byMonth[mKey].days += 1
+  }
+  return byMonth
+}
+
+// План на неделю по одному числовому показателю: план каждого затронутого
+// месяца делится на число дней В НЁМ (не на константу 1/4.33), берётся доля
+// дней недели, попавших в этот месяц, и результаты по месяцам складываются —
+// для недели на стыке два месячных плана "смешиваются" пропорционально дням.
+// planByMonth — { 'YYYY-MM-01': значение_плана_на_месяц }. Если план на один
+// из затронутых месяцев не задан — план на неделю не считаем (null), чтобы не
+// показывать заниженное число молча.
+export function weeklyPlanFromMonthly(weekStart, planByMonth) {
+  const split = weekMonthSplit(weekStart)
+  let total = 0
+  for (const [mKey, { days, daysInMonth }] of Object.entries(split)) {
+    const monthPlan = planByMonth[mKey]
+    if (monthPlan == null) return null
+    total += (monthPlan / daysInMonth) * days
+  }
+  return total
+}
+
 export function periodPaceRatio(mode, periodStart, referenceDate = new Date()) {
   const todayStr = todayISO(referenceDate)
   if (mode === 'week') {
