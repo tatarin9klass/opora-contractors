@@ -176,6 +176,30 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 /* Более узкая версия таблицы для широких наборов колонок (напр. таблица
    подрядчиков с конверсиями) — чтобы всё помещалось без горизонтальной прокрутки. */
 .table-compact thead th { padding: 7px 8px; font-size: 10px; }
+
+/* Регулярный менеджмент — таблица метрика×неделя с закреплёнными первым
+   столбцом и шапкой (как заморозка областей в Excel/Google Sheets). Ширина
+   таблицы по контенту (не 100%), поэтому недели не сжимаются — лишнее уходит
+   в горизонтальный скролл контейнера. */
+.regmgmt-wrap {
+  overflow-x: auto; background: var(--white);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+.regmgmt-table { width: auto; border-collapse: separate; border-spacing: 0; }
+.regmgmt-table th, .regmgmt-table td {
+  padding: 9px 16px; font-size: 13px; white-space: nowrap;
+  border-bottom: 1px solid var(--border-light); text-align: right; min-width: 100px;
+}
+.regmgmt-table thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  font-size: 12px; text-transform: none; letter-spacing: 0;
+}
+.regmgmt-table .regmgmt-label-col {
+  position: sticky; left: 0; z-index: 1;
+  background: var(--white); text-align: left; min-width: 200px;
+}
+.regmgmt-table thead th.regmgmt-label-col { z-index: 3; background: var(--bg); }
 .table-compact tbody td { padding: 7px 8px; font-size: 12px; }
 
 /* Metric cells */

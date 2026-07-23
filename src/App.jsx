@@ -7,6 +7,7 @@ import ImportPage from './pages/ImportPage.jsx'
 import WeeklyExpensesPage from './pages/WeeklyExpensesPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import HelpPage from './pages/HelpPage.jsx'
+import RegularManagementPage from './pages/RegularManagementPage.jsx'
 import { AuthProvider, useAuth } from './lib/auth.jsx'
 
 const PAGE_TITLES = {
@@ -14,6 +15,7 @@ const PAGE_TITLES = {
   contractors: 'Подрядчики',
   import: 'Импорт данных',
   expenses: 'Ввод расходов',
+  regmgmt: 'Регулярный менеджмент',
   help: 'Инструкция',
 }
 
@@ -83,6 +85,7 @@ function AppShell() {
           {safePage === 'passport' && passportId && <PassportPage contractorId={passportId} onBack={backToList} isAdmin={isAdmin} />}
           {safePage === 'import' && <ImportPage />}
           {safePage === 'expenses' && <WeeklyExpensesPage />}
+          {safePage === 'regmgmt' && <RegularManagementPage />}
           {safePage === 'help' && <HelpPage />}
         </div>
       </div>
