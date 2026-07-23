@@ -15,7 +15,6 @@ const MEETING_ENTITY_TYPE_ID = 1044;
 const MEETING_STAGE_SUCCESS = "DT1044_64:SUCCESS";
 
 const LEADS_LOOKBACK_IDS = 5000;
-const DEALS_LOOKBACK_IDS = 3000;
 
 // ИСПРАВЛЕНО (docs/TZ.md, диагностика расхождения квалов): раньше квалы искались
 // тем же окном по ID лидов (последние 5000), что и лиды — лид, квалифицированный
@@ -25,6 +24,15 @@ const DEALS_LOOKBACK_IDS = 3000;
 // Теперь квалы ищутся прямой фильтрацией crm.lead.list по самому полю даты
 // квалификации (FIELD_QUALIFIED_DATE), без привязки к ID вообще.
 const QUAL_SAFETY_CAP = 5000; // предохранитель на случай, если фильтр Bitrix по этому полю не сработает
+
+// ИСПРАВЛЕНО: та же болезнь, что была у квалов — сделки искались окном по ID
+// (последние 3000), а не по дате. Подтверждено на практике: сделка ID 158348,
+// оплаченная на 29 неделе, не попадала в daily_facts, потому что к моменту
+// импорта её ID оказался дальше чем 3000 назад от текущего максимума —
+// окно по ID её просто не захватывало, независимо от даты оплаты.
+// Теперь сделки ищутся прямой фильтрацией crm.deal.list по самому полю даты
+// оплаты (DEAL_PAID_DATE_FIELD), без привязки к ID вообще — как и квалы.
+const DEAL_SAFETY_CAP = 5000; // предохранитель на случай, если фильтр Bitrix по этому полю не сработает
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -198,27 +206,28 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const sourceMap = await buildSourceMap();
 
-    const [leadsMaxId, dealsMaxId] = await Promise.all([
-      getCurrentMaxId("crm.lead.list", {}),
-      getCurrentMaxId("crm.deal.list", { CATEGORY_ID: DEAL_CATEGORY_ID }), // без фильтра по стадии — сделка могла уйти дальше
-    ]);
-
+    const leadsMaxId = await getCurrentMaxId("crm.lead.list", {});
     const leadsFromId = Math.max(0, leadsMaxId - LEADS_LOOKBACK_IDS);
-    const dealsFromId = Math.max(0, dealsMaxId - DEALS_LOOKBACK_IDS);
 
     const qualDateFromMsk = `${targetDate}T00:00:00+03:00`;
     const qualDateToMsk = `${addDays(targetDate, 1)}T00:00:00+03:00`;
+    const dealDateFromMsk = qualDateFromMsk;
+    const dealDateToMsk = qualDateToMsk;
 
-    const [leadsPool, qualsResult, dealsPool, meetingsRaw] = await Promise.all([
+    const [leadsPool, qualsResult, dealsResult, meetingsRaw] = await Promise.all([
       bitrixListSinceId("crm.lead.list", { select: ["ID", "SOURCE_ID", "DATE_CREATE"] }, leadsFromId),
       // Квалы — прямая фильтрация по дате квалификации, без окна по ID (см. комментарий у QUAL_SAFETY_CAP).
       bitrixListByDateField("crm.lead.list", { select: ["ID", "SOURCE_ID", FIELD_QUALIFIED_DATE] }, FIELD_QUALIFIED_DATE, qualDateFromMsk, qualDateToMsk, QUAL_SAFETY_CAP),
-      // Сделки: только по воронке (CATEGORY_ID), БЕЗ фильтра по стадии.
-      // Дата берётся из спец.поля "дата входа в стадию оплаты", а не из MOVED_TIME/текущей стадии.
-      bitrixListSinceId("crm.deal.list", {
-        filter: { CATEGORY_ID: DEAL_CATEGORY_ID },
-        select: ["ID", "SOURCE_ID", DEAL_PAID_DATE_FIELD, "OPPORTUNITY"],
-      }, dealsFromId),
+      // Сделки: только по воронке (CATEGORY_ID), БЕЗ фильтра по стадии — прямая
+      // фильтрация по дате оплаты, без окна по ID (см. комментарий у DEAL_SAFETY_CAP).
+      bitrixListByDateField(
+        "crm.deal.list",
+        { filter: { CATEGORY_ID: DEAL_CATEGORY_ID }, select: ["ID", "SOURCE_ID", DEAL_PAID_DATE_FIELD, "OPPORTUNITY"] },
+        DEAL_PAID_DATE_FIELD,
+        dealDateFromMsk,
+        dealDateToMsk,
+        DEAL_SAFETY_CAP,
+      ),
       // ИСПРАВЛЕНО: раньше тянули только ПЕРВУЮ страницу (до 50 записей) отсортированную по id —
       // встреча, созданная давно но проведённая на этой неделе, могла не попасть в топ-50 по id
       // и молча теряться. Теперь листаем ВСЕ страницы, как для лидов/квалов/сделок.
@@ -234,6 +243,7 @@ Deno.serve(async (req: Request) => {
     ]);
 
     const qualsPool = qualsResult.items;
+    const dealsPool = dealsResult.items;
 
     const leadsForDay = leadsPool.filter(i => toDateMsk(i.DATE_CREATE) === targetDate);
     // Клиентская проверка даты остаётся как страховка даже при серверной фильтрации —
@@ -250,7 +260,7 @@ Deno.serve(async (req: Request) => {
     });
     const meetingsForDay = meetingsRaw.filter((m: any) => toDateMsk(m.closedate) === targetDate);
 
-    console.info(`For ${targetDate}: leads=${leadsForDay.length}, quals=${qualsForDay.length} (pool=${qualsPool.length}, filterLikelyBroken=${qualsResult.filterLikelyBroken}), deals=${dealsForDay.length}, meetings=${meetingsForDay.length}`);
+    console.info(`For ${targetDate}: leads=${leadsForDay.length}, quals=${qualsForDay.length} (pool=${qualsPool.length}, filterLikelyBroken=${qualsResult.filterLikelyBroken}), deals=${dealsForDay.length} (pool=${dealsPool.length}, filterLikelyBroken=${dealsResult.filterLikelyBroken}), meetings=${meetingsForDay.length}`);
 
     const leadsBySource = groupBySourceName(leadsForDay, "SOURCE_ID", sourceMap);
     const qualsBySource = groupBySourceName(qualsForDay, "SOURCE_ID", sourceMap);
@@ -322,6 +332,7 @@ Deno.serve(async (req: Request) => {
       success: true, date: targetDate, week_start: targetWeekStart,
       leads_for_day: leadsForDay.length, quals_for_day: qualsForDay.length, deals_for_day: dealsForDay.length, meetings_for_day: meetingsForDay.length,
       quals_filter_likely_broken: qualsResult.filterLikelyBroken,
+      deals_filter_likely_broken: dealsResult.filterLikelyBroken,
       processed: results, unmatched_sources: unmatched,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
