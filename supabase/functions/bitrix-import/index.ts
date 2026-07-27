@@ -14,6 +14,13 @@ const DEAL_CATEGORY_ID = 34;
 const MEETING_ENTITY_TYPE_ID = 1044;
 const MEETING_STAGE_SUCCESS = "DT1044_64:SUCCESS";
 
+// Дубли — лиды, которые Битрикс автоматически переводит на этап "Дубль" в
+// воронке лидов (в момент создания, поэтому дата дубля = дата создания лида,
+// без отдельного датового поля). Название стадии ищем по NAME через
+// crm.status.list, а не хардкодим STATUS_ID, т.к. коды у кастомных статусов
+// в разных аккаунтах Битрикса разные.
+const DUPLICATE_STATUS_NAME = "Дубль";
+
 const LEADS_LOOKBACK_IDS = 5000;
 
 // ИСПРАВЛЕНО (docs/TZ.md, диагностика расхождения квалов): раньше квалы искались
@@ -134,6 +141,21 @@ async function bitrixListByDateField(
   return { items, filterLikelyBroken };
 }
 
+// Находит STATUS_ID лидового статуса по отображаемому имени (ENTITY_ID
+// "STATUS" — это как раз статусы/стадии воронки лидов в Битриксе).
+async function findLeadStatusId(name: string): Promise<string | null> {
+  let start = 0;
+  while (true) {
+    const json = await bitrixCall("crm.status.list", { filter: { ENTITY_ID: "STATUS" }, select: ["STATUS_ID", "NAME"], start });
+    const page: any[] = json.result || [];
+    const found = page.find((s: any) => s.NAME === name);
+    if (found) return String(found.STATUS_ID);
+    if (!json.next) break;
+    start = json.next;
+  }
+  return null;
+}
+
 async function buildSourceMap(): Promise<Map<string, string>> {
   const all: any[] = [];
   let start = 0;
@@ -205,6 +227,10 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const sourceMap = await buildSourceMap();
+    const duplicateStatusId = await findLeadStatusId(DUPLICATE_STATUS_NAME);
+    if (!duplicateStatusId) {
+      console.warn(`findLeadStatusId: не нашли статус лида с именем "${DUPLICATE_STATUS_NAME}" — дубли будут считаться нулями до исправления`);
+    }
 
     const leadsMaxId = await getCurrentMaxId("crm.lead.list", {});
     const leadsFromId = Math.max(0, leadsMaxId - LEADS_LOOKBACK_IDS);
@@ -215,7 +241,7 @@ Deno.serve(async (req: Request) => {
     const dealDateToMsk = qualDateToMsk;
 
     const [leadsPool, qualsResult, dealsResult, meetingsRaw] = await Promise.all([
-      bitrixListSinceId("crm.lead.list", { select: ["ID", "SOURCE_ID", "DATE_CREATE"] }, leadsFromId),
+      bitrixListSinceId("crm.lead.list", { select: ["ID", "SOURCE_ID", "DATE_CREATE", "STATUS_ID"] }, leadsFromId),
       // Квалы — прямая фильтрация по дате квалификации, без окна по ID (см. комментарий у QUAL_SAFETY_CAP).
       bitrixListByDateField("crm.lead.list", { select: ["ID", "SOURCE_ID", FIELD_QUALIFIED_DATE] }, FIELD_QUALIFIED_DATE, qualDateFromMsk, qualDateToMsk, QUAL_SAFETY_CAP),
       // Сделки: только по воронке (CATEGORY_ID), БЕЗ фильтра по стадии — прямая
@@ -259,13 +285,17 @@ Deno.serve(async (req: Request) => {
       return pDate && toDateMsk(pDate) === targetDate;
     });
     const meetingsForDay = meetingsRaw.filter((m: any) => toDateMsk(m.closedate) === targetDate);
+    // Дубль определяется автоматически при создании лида — дата совпадает с
+    // DATE_CREATE, поэтому берём дубли прямо из leadsForDay, без отдельного запроса.
+    const duplicatesForDay = duplicateStatusId ? leadsForDay.filter(i => String(i.STATUS_ID) === duplicateStatusId) : [];
 
-    console.info(`For ${targetDate}: leads=${leadsForDay.length}, quals=${qualsForDay.length} (pool=${qualsPool.length}, filterLikelyBroken=${qualsResult.filterLikelyBroken}), deals=${dealsForDay.length} (pool=${dealsPool.length}, filterLikelyBroken=${dealsResult.filterLikelyBroken}), meetings=${meetingsForDay.length}`);
+    console.info(`For ${targetDate}: leads=${leadsForDay.length}, quals=${qualsForDay.length} (pool=${qualsPool.length}, filterLikelyBroken=${qualsResult.filterLikelyBroken}), deals=${dealsForDay.length} (pool=${dealsPool.length}, filterLikelyBroken=${dealsResult.filterLikelyBroken}), meetings=${meetingsForDay.length}, duplicates=${duplicatesForDay.length}`);
 
     const leadsBySource = groupBySourceName(leadsForDay, "SOURCE_ID", sourceMap);
     const qualsBySource = groupBySourceName(qualsForDay, "SOURCE_ID", sourceMap);
     const dealsBySource = groupBySourceName(dealsForDay, "SOURCE_ID", sourceMap);
     const meetingsBySource = groupBySourceName(meetingsForDay, "sourceId", sourceMap);
+    const duplicatesBySource = groupBySourceName(duplicatesForDay, "SOURCE_ID", sourceMap);
     // Revenue = сумма OPPORTUNITY сделок, оплаченных в этот день (тот же набор dealsForDay).
     const revenueBySource = sumBySourceName(dealsForDay, "SOURCE_ID", "OPPORTUNITY", sourceMap);
 
@@ -294,7 +324,7 @@ Deno.serve(async (req: Request) => {
         await supabase.from("daily_facts").upsert({
           fact_date: targetDate,
           source_marker: row.source_marker,
-          leads: 0, quals: 0, meetings: 0, deals: 0, revenue: 0,
+          leads: 0, quals: 0, meetings: 0, deals: 0, revenue: 0, duplicates: 0,
         }, { onConflict: "fact_date,source_marker" });
       }
     }
@@ -305,6 +335,7 @@ Deno.serve(async (req: Request) => {
       const dealsCount = dealsBySource[sourceName] || 0;
       const meetingsCount = meetingsBySource[sourceName] || 0;
       const revenueSum = revenueBySource[sourceName] || 0;
+      const duplicatesCount = duplicatesBySource[sourceName] || 0;
       const matched = dbSourceMap.get(sourceName.toLowerCase());
 
       if (!matched) {
@@ -322,15 +353,17 @@ Deno.serve(async (req: Request) => {
         source_marker: sourceName,
         contractor_id: matched?.contractor_id || null,
         source_id: matched?.id || null,
-        leads: leadsCount, quals: qualsCount, meetings: meetingsCount, deals: dealsCount, revenue: revenueSum,
+        leads: leadsCount, quals: qualsCount, meetings: meetingsCount, deals: dealsCount, revenue: revenueSum, duplicates: duplicatesCount,
       }, { onConflict: "fact_date,source_marker" });
 
-      results.push({ source: sourceName, matched: !!matched, leads: leadsCount, quals: qualsCount, meetings: meetingsCount, deals: dealsCount, revenue: revenueSum });
+      results.push({ source: sourceName, matched: !!matched, leads: leadsCount, quals: qualsCount, meetings: meetingsCount, deals: dealsCount, revenue: revenueSum, duplicates: duplicatesCount });
     }
 
     return new Response(JSON.stringify({
       success: true, date: targetDate, week_start: targetWeekStart,
       leads_for_day: leadsForDay.length, quals_for_day: qualsForDay.length, deals_for_day: dealsForDay.length, meetings_for_day: meetingsForDay.length,
+      duplicates_for_day: duplicatesForDay.length,
+      duplicate_status_found: !!duplicateStatusId,
       quals_filter_likely_broken: qualsResult.filterLikelyBroken,
       deals_filter_likely_broken: dealsResult.filterLikelyBroken,
       processed: results, unmatched_sources: unmatched,

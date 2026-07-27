@@ -29,6 +29,9 @@ function deriveRates(a) {
     cr_qm: a.quals > 0 ? Math.round((a.meetings / a.quals) * 1000) / 10 : null,
     cr_lo: a.leads > 0 ? Math.round((a.deals / a.leads) * 1000) / 10 : null,
     aov: a.deals > 0 ? Math.round(a.revenue / a.deals) : null,
+    // Дубли — null для недель без данных по дублям (историческая сводка),
+    // а не 0, чтобы не показывать обманчивый "0% дублей".
+    dup_rate: a.duplicates != null && a.leads > 0 ? Math.round((a.duplicates / a.leads) * 1000) / 10 : null,
   }
 }
 
@@ -39,6 +42,7 @@ function deriveRates(a) {
 const METRIC_GROUPS = [
   { key: 'spend', label: 'Расход', format: formatMoney, kind: 'count', goodWhen: 'lower' },
   { key: 'leads', label: 'Лиды', format: v => String(v), kind: 'count', goodWhen: 'higher' },
+  { key: 'dup_rate', label: 'Дубли, %', format: v => `${v}%`, kind: 'ratio', goodWhen: 'lower' },
   { key: 'cpl', label: 'CPL', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
   { key: 'quals', label: 'Квалы', format: v => String(v), kind: 'count', goodWhen: 'higher' },
   { key: 'cr_lq', label: 'CR(l→q)', format: v => `${v}%`, kind: 'ratio', goodWhen: 'higher' },
@@ -52,6 +56,9 @@ const METRIC_GROUPS = [
   { key: 'revenue', label: 'Revenue', format: formatMoney, kind: 'count', goodWhen: 'higher' },
   { key: 'aov', label: 'AOV', format: formatMoney, kind: 'rate', goodWhen: 'higher' },
 ]
+
+// Норма по дублям — фиксированные 12,5%, всегда и для всех, не месячный план.
+const DUP_RATE_LIMIT = 12.5
 
 // Ячейка строки отклонения — единая логика для всех трёх видов метрик.
 function DeviationCell({ m, fact, plan }) {
@@ -89,7 +96,7 @@ export default function RegularManagementPage() {
     async function load() {
       setLoading(true)
       const [{ data: stats }, { data: historical }, { data: targets }] = await Promise.all([
-        supabase.from('weekly_stats').select('week_start, leads, quals, meetings, deals, spend, revenue'),
+        supabase.from('weekly_stats').select('week_start, leads, quals, meetings, deals, spend, revenue, duplicates'),
         supabase.from('dashboard_historical_weeks').select('*'),
         supabase.from('monthly_targets').select('*'),
       ])
@@ -98,7 +105,7 @@ export default function RegularManagementPage() {
       const byWeek = {}
       for (const r of stats || []) {
         if (!r.week_start) continue
-        if (!byWeek[r.week_start]) byWeek[r.week_start] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0 }
+        if (!byWeek[r.week_start]) byWeek[r.week_start] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0, duplicates: 0 }
         const a = byWeek[r.week_start]
         a.leads += r.leads || 0
         a.quals += r.quals || 0
@@ -106,12 +113,17 @@ export default function RegularManagementPage() {
         a.deals += r.deals || 0
         a.spend += Number(r.spend) || 0
         a.revenue += Number(r.revenue) || 0
+        a.duplicates += r.duplicates || 0
       }
       // Историческая сводка ПЕРЕЗАПИСЫВАЕТ live за ту же неделю (см. Дашборд).
+      // duplicates для исторических недель намеренно null (не 0) — данных по
+      // дублям за них нет, а не "дублей не было"; deriveRates отдаёт null,
+      // таблица показывает "—" вместо обманчивого 0%.
       for (const h of historical || []) {
         byWeek[h.week_start] = {
           leads: h.leads || 0, quals: h.quals || 0, meetings: h.meetings || 0,
           deals: h.deals || 0, spend: Number(h.spend) || 0, revenue: Number(h.revenue) || 0,
+          duplicates: null,
         }
       }
 
@@ -157,7 +169,7 @@ export default function RegularManagementPage() {
           cr_lo: planRaw.leads > 0 ? Math.round((planRaw.deals / planRaw.leads) * 1000) / 10 : null,
           aov: planRaw.deals > 0 ? Math.round(planRaw.revenue / planRaw.deals) : null,
         }
-        return { week_start, fact, plan: { ...planCounts, ...planRates } }
+        return { week_start, fact, plan: { ...planCounts, ...planRates, dup_rate: DUP_RATE_LIMIT } }
       })
       setWeekCols(cols)
       setLoading(false)

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase.js'
-import { getStatusClass, cplClass, cpqlClass, cacClass, formatMoney } from '../lib/helpers.js'
+import { getStatusClass, cplClass, cpqlClass, cacClass, dupRateClass, formatMoney } from '../lib/helpers.js'
 import { weekStart as getWeekStart, todayISO, periodPaceRatio } from '../lib/dateContext.js'
 import AddContractorModal from '../components/AddContractorModal.jsx'
 
@@ -155,7 +155,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
   const periodByContractor = {}
   periodRows.forEach(r => {
     if (!r.contractor_id) return
-    if (!periodByContractor[r.contractor_id]) periodByContractor[r.contractor_id] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0 }
+    if (!periodByContractor[r.contractor_id]) periodByContractor[r.contractor_id] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0, duplicates: 0 }
     const a = periodByContractor[r.contractor_id]
     a.leads += r.leads || 0
     a.quals += r.quals || 0
@@ -163,6 +163,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     a.deals += r.deals || 0
     a.spend += Number(r.spend) || 0
     a.revenue += Number(r.revenue) || 0
+    a.duplicates += r.duplicates || 0
   })
 
   // Считает CPL/CPQL/CPM/CAC/CR% из суммарных чисел — та же формула, что и
@@ -176,6 +177,8 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
       cr_lq: a.leads > 0 ? Math.round((a.quals / a.leads) * 1000) / 10 : null,
       cr_qm: a.quals > 0 ? Math.round((a.meetings / a.quals) * 1000) / 10 : null,
       cr_lo: a.leads > 0 ? Math.round((a.deals / a.leads) * 1000) / 10 : null,
+      // Норма по дублям — фиксированные 12,5%, не завязана на план подрядчика.
+      dup_rate: a.leads > 0 ? Math.round((a.duplicates / a.leads) * 1000) / 10 : null,
     }
   }
 
@@ -194,8 +197,9 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     acc.meetings += r.meetings || 0
     acc.deals += r.deals || 0
     acc.revenue += Number(r.revenue) || 0
+    acc.duplicates += r.duplicates || 0
     return acc
-  }, { spend: 0, leads: 0, quals: 0, meetings: 0, deals: 0, revenue: 0 })
+  }, { spend: 0, leads: 0, quals: 0, meetings: 0, deals: 0, revenue: 0, duplicates: 0 })
   const totalsFact = { ...totalsRaw, ...deriveRates(totalsRaw) }
 
   const periodLabel = mode === 'month' ? monthLabel(selectedMonth) : weekLabel(selectedWeek)
@@ -229,6 +233,8 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     { key: 'name', label: 'Подрядчик', field: r => (r.short_name || r.name || '').toLowerCase() },
     { key: 'spend', label: 'Расход', field: r => periodFact(r.contractor_id).spend },
     { key: 'leads', label: 'Лиды', field: r => periodFact(r.contractor_id).leads },
+    { key: 'duplicates', label: 'Дубли', field: r => periodFact(r.contractor_id).duplicates },
+    { key: 'dup_rate', label: '% дублей', field: r => periodFact(r.contractor_id).dup_rate ?? -1 },
     { key: 'cpl', label: 'CPL', field: r => periodFact(r.contractor_id).cpl ?? -1 },
     { key: 'quals', label: 'Квалы', field: r => periodFact(r.contractor_id).quals },
     { key: 'cr_lq', label: 'CR(l→q)', field: r => periodFact(r.contractor_id).cr_lq ?? -1 },
@@ -412,6 +418,8 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                   <td>—</td>
                   <td style={{ textAlign: 'right' }}>{formatMoney(totalsFact.spend)}</td>
                   <td style={{ textAlign: 'right' }}>{totalsFact.leads}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.duplicates}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.dup_rate != null ? `${totalsFact.dup_rate}%` : '—'}</td>
                   <td style={{ textAlign: 'right' }}>{totalsFact.cpl ? formatMoney(totalsFact.cpl) : '—'}</td>
                   <td style={{ textAlign: 'right' }}>{totalsFact.quals}</td>
                   <td style={{ textAlign: 'right' }}>{totalsFact.cr_lq != null ? `${totalsFact.cr_lq}%` : '—'}</td>
@@ -437,6 +445,10 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                       <td><span className={`badge ${getStatusClass(r.status)}`}>{r.status}</span></td>
                       <td style={{ textAlign: 'right' }}>{formatMoney(fact.spend)}</td>
                       <td style={{ textAlign: 'right' }} className="metric">{fact.leads || 0}</td>
+                      <td style={{ textAlign: 'right' }} className="metric">{fact.duplicates || 0}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span className={`metric ${dupRateClass(fact.dup_rate)}`}>{fact.dup_rate != null ? `${fact.dup_rate}%` : '—'}</span>
+                      </td>
                       <td style={{ textAlign: 'right' }}>
                         <span className={`metric ${cplClass(fact.cpl)}`}>{fact.cpl ? formatMoney(fact.cpl) : '—'}</span>
                       </td>

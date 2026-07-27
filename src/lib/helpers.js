@@ -42,6 +42,12 @@ export function cacClass(val) {
   return 'metric-danger'
 }
 
+// Норма по дублям — не более 12,5%, всегда фиксированная (не план по месяцам).
+export function dupRateClass(val) {
+  if (val == null) return 'metric-empty'
+  return val <= 12.5 ? 'metric-ok' : 'metric-danger'
+}
+
 export function metricCardClass(type, val) {
   if (!val) return 'neutral'
   if (type === 'cpl') return cplClass(val).replace('metric-', '')

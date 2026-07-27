@@ -58,7 +58,7 @@ function monthLabel(dateStr) {
 function deviationColor(metric, fact, plan) {
   if (!plan || plan === 0 || fact == null) return 'var(--text-secondary)'
   const positive = ['leads', 'quals', 'meetings', 'deals', 'cr_lq', 'cr_qm', 'cr_mo', 'cr_lo', 'revenue', 'aov'].includes(metric)
-  const cost = ['spend', 'cpl', 'cpql', 'cac', 'cpm'].includes(metric)
+  const cost = ['spend', 'cpl', 'cpql', 'cac', 'cpm', 'dup_rate'].includes(metric)
   if (positive) return fact >= plan ? 'var(--green-primary)' : 'var(--red)'
   if (cost) return fact <= plan ? 'var(--green-primary)' : 'var(--red)'
   return 'var(--text-secondary)'
@@ -192,8 +192,13 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
     const spend = rows.reduce((s, r) => s + (Number(r.spend) || 0), 0)
     const revenue = rows.reduce((s, r) => s + (Number(r.revenue) || 0), 0)
     const cac = deals > 0 ? Math.round(spend / deals) : null
+    // Дубли не считались за исторические недели (dashboard_historical_weeks) —
+    // если период задевает хоть одну такую неделю, показываем "нет данных"
+    // (null), а не заниженный % из-за молчаливого 0 по недостающим неделям.
+    const duplicatesKnown = rows.every(r => r.duplicates != null)
+    const duplicates = duplicatesKnown ? rows.reduce((s, r) => s + (r.duplicates || 0), 0) : null
     return {
-      spend, leads, quals, meetings, deals, revenue,
+      spend, leads, quals, meetings, deals, revenue, duplicates,
       cpl: leads > 0 ? Math.round(spend / leads) : null,
       cpql: quals > 0 ? Math.round(spend / quals) : null,
       cac,
@@ -203,6 +208,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
       cr_mo: meetings > 0 ? Math.round((deals / meetings) * 1000) / 10 : null,
       cr_lo: leads > 0 ? Math.round((deals / leads) * 1000) / 10 : null,
       aov: deals > 0 ? Math.round(revenue / deals) : null,
+      dup_rate: duplicatesKnown && leads > 0 ? Math.round((duplicates / leads) * 1000) / 10 : null,
     }
   }
 
@@ -508,7 +514,11 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
     { label: 'CR(l→o)', key: 'cr_lo', factRaw: fact.cr_lo, format: v => `${v}%` },
     { label: 'Revenue', key: 'revenue', factRaw: fact.revenue, format: v => formatMoney(v) },
     { label: 'AOV', key: 'aov', factRaw: fact.aov, format: v => formatMoney(v) },
+    { label: 'Дубли, %', key: 'dup_rate', factRaw: fact.dup_rate, format: v => `${v}%` },
   ]
+
+  // Норма по дублям — фиксированные 12,5%, всегда и для всех, не месячный план.
+  const DUP_RATE_LIMIT = 12.5
 
   return (
     <div>
@@ -665,7 +675,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
             </thead>
             <tbody>
               {extraRows.map(row => {
-                const p = planVal(row.key)
+                const p = row.key === 'dup_rate' ? DUP_RATE_LIMIT : planVal(row.key)
                 const f = row.factRaw
                 const pctVal = pct(f, p)
                 const devColor = deviationColor(row.key, f, colorPlanFor(row.key, p))
