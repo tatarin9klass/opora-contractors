@@ -1,9 +1,42 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
-import { getStatusClass, formatMoney, formatDate, metricCardClass, ACTIVE_PAYMENT_TYPES } from '../lib/helpers.js'
+import { getStatusClass, formatMoney, formatDate, ACTIVE_PAYMENT_TYPES } from '../lib/helpers.js'
+import { weekStart as getWeekStart, todayISO, addDaysISO, daysBetweenISO, weekStartOf } from '../lib/dateContext.js'
 import ChangeStatusModal from '../components/ChangeStatusModal.jsx'
 import AddDecisionModal from '../components/AddDecisionModal.jsx'
 import DeleteContractorModal from '../components/DeleteContractorModal.jsx'
+
+// Системный импорт данных через приложение начался с 16 июля 2026 — выбор
+// произвольного диапазона дат в "Показателях подрядчика" раньше этой даты
+// не имеет смысла (данных нет). Та же граница, что и в ContractorsPage.
+const MIN_RANGE_DATE = '2026-07-16'
+
+function monthKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`
+}
+function monthLabel(dateStr) {
+  return new Date(dateStr).toLocaleString('ru-RU', { month: 'long', year: 'numeric' })
+}
+function nextMonth(m) {
+  const d = new Date(m)
+  d.setMonth(d.getMonth() + 1)
+  return monthKey(d)
+}
+function getISOWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  const dayNum = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+}
+function weekLabel(dateStr) {
+  const d = new Date(dateStr)
+  const isCurrent = dateStr === getWeekStart()
+  return `${getISOWeek(d)} неделя ${d.getFullYear()}${isCurrent ? ' (текущая)' : ''}`
+}
+function formatRangeDate(iso) {
+  return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
 
 // Вкладка «Расход» удалена (ТЗ раздел 8.2) — ввод расхода переехал в отдельный
 // раздел «Ввод расходов» (src/pages/WeeklyExpensesPage.jsx), не в паспорт.
@@ -55,9 +88,26 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
   const [groupPicks, setGroupPicks] = useState([])
   const [groupSaving, setGroupSaving] = useState(false)
 
+  // Показатели подрядчика (Обзор) — свой выбор периода (месяц/неделя/период),
+  // независимый от других вкладок/страниц.
+  const [pMode, setPMode] = useState('week')
+  const [pWeek, setPWeek] = useState(getWeekStart())
+  const [pMonth, setPMonth] = useState(monthKey())
+  const [pRangeFrom, setPRangeFrom] = useState(MIN_RANGE_DATE)
+  const [pRangeTo, setPRangeTo] = useState(todayISO())
+  const [pAvailableWeeks, setPAvailableWeeks] = useState([])
+  const [pAvailableMonths, setPAvailableMonths] = useState([])
+  const [pWeeklyStats, setPWeeklyStats] = useState([])
+  const [pDailyFacts, setPDailyFacts] = useState([])
+  const [pExpenses, setPExpenses] = useState([])
+  const [pFrom, setPFrom] = useState(null)
+  const [pTo, setPTo] = useState(null)
+  const [pLoading, setPLoading] = useState(false)
+  const [sourcesExpanded, setSourcesExpanded] = useState(false)
+
   async function load() {
     setLoading(true)
-    const [c, m, s, d, fi, pt, tg] = await Promise.all([
+    const [c, m, s, d, fi, pt, tg, ws] = await Promise.all([
       supabase.from('contractors').select('*, contractor_types(name), contractor_statuses(name, is_active)').eq('id', contractorId).single(),
       supabase.from('contractor_mtd').select('*').eq('contractor_id', contractorId).single(),
       supabase.from('sources').select('*, payment_types(name)').eq('contractor_id', contractorId).order('created_at'),
@@ -65,6 +115,7 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
       supabase.from('contractor_files').select('*').eq('contractor_id', contractorId).order('uploaded_at', { ascending: false }),
       supabase.from('payment_types').select('*').order('name'),
       supabase.from('contractor_targets').select('*').eq('contractor_id', contractorId).maybeSingle(),
+      supabase.from('weekly_stats').select('week_start').eq('contractor_id', contractorId),
     ])
     setContractor(c.data)
     setContractorForm(c.data || {})
@@ -75,6 +126,17 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
     setPaymentTypes(pt.data || [])
     setTarget(tg.data || null)
     setTargetForm(tg.data || {})
+
+    const wsRows = ws.data || []
+    setPWeeklyStats(wsRows)
+    const weeks = [...new Set(wsRows.map(r => r.week_start))].sort((a, b) => b.localeCompare(a))
+    setPAvailableWeeks(weeks)
+    if (weeks.length > 0 && !weeks.includes(pWeek)) setPWeek(weeks[0])
+    const now = new Date()
+    const futureMonths = [0, 1, 2].map(offset => monthKey(new Date(now.getFullYear(), now.getMonth() + offset, 1)))
+    const months = [...new Set([...futureMonths, ...weeks.map(w => monthKey(new Date(w)))])].sort((a, b) => b.localeCompare(a))
+    setPAvailableMonths(months)
+
     // Найти id статуса Архив
     const archiveStatus = (await supabase.from('contractor_statuses').select('id').eq('name', 'Архив').single()).data
     setArchiveStatusId(archiveStatus?.id)
@@ -82,6 +144,55 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
   }
 
   useEffect(() => { load() }, [contractorId])
+
+  // Показатели подрядчика за выбранный период — daily_facts (реальные
+  // ежедневные факты, дают разбивку по источникам) + weekly_expenses
+  // (расход фиксируется только понедельно, для месяца/произвольного периода
+  // прорируется по дням — та же логика, что и в ContractorsPage).
+  useEffect(() => {
+    if (!contractorId) return
+    async function loadPeriodData() {
+      setPLoading(true)
+      let from, to
+      if (pMode === 'week') {
+        from = pWeek
+        to = addDaysISO(pWeek, 6)
+      } else if (pMode === 'month') {
+        const weeksInMonth = pWeeklyStats
+          .filter(r => r.week_start >= pMonth && r.week_start < nextMonth(pMonth))
+          .map(r => r.week_start)
+          .sort()
+        if (weeksInMonth.length > 0) {
+          from = weeksInMonth[0]
+          to = addDaysISO(weeksInMonth[weeksInMonth.length - 1], 6)
+        } else {
+          from = pMonth
+          to = addDaysISO(nextMonth(pMonth), -1)
+        }
+      } else {
+        from = pRangeFrom < MIN_RANGE_DATE ? MIN_RANGE_DATE : pRangeFrom
+        to = pRangeTo < from ? from : pRangeTo
+      }
+      const [{ data: facts }, { data: exp }] = await Promise.all([
+        supabase.from('daily_facts')
+          .select('source_id, leads, quals, meetings, deals, revenue, duplicates')
+          .eq('contractor_id', contractorId)
+          .gte('fact_date', from)
+          .lte('fact_date', to),
+        supabase.from('weekly_expenses')
+          .select('week_start, spend')
+          .eq('contractor_id', contractorId)
+          .gte('week_start', weekStartOf(from))
+          .lte('week_start', weekStartOf(to)),
+      ])
+      setPDailyFacts(facts || [])
+      setPExpenses(exp || [])
+      setPFrom(from)
+      setPTo(to)
+      setPLoading(false)
+    }
+    loadPeriodData()
+  }, [contractorId, pMode, pWeek, pMonth, pRangeFrom, pRangeTo, pWeeklyStats])
 
   // Сохранить источник (новый или редактирование)
   async function saveSource(source) {
@@ -266,6 +377,71 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
   const groupPickTypeId = groupPickSources[0]?.payment_type_id ?? null
   const groupPickValid = groupPicks.length >= 2 && groupPickSources.every(s => s.payment_type_id && s.payment_type_id === groupPickTypeId)
 
+  // Показатели подрядчика за выбранный период — суммарно по всем источникам.
+  const pAgg = { leads: 0, quals: 0, meetings: 0, deals: 0, revenue: 0, duplicates: 0, spend: 0 }
+  for (const r of pDailyFacts) {
+    pAgg.leads += r.leads || 0
+    pAgg.quals += r.quals || 0
+    pAgg.meetings += r.meetings || 0
+    pAgg.deals += r.deals || 0
+    pAgg.revenue += Number(r.revenue) || 0
+    pAgg.duplicates += r.duplicates || 0
+  }
+  // Расход фиксируется только понедельно — прорируем по дням, попавшим в
+  // выбранный период (для целой недели/месяца доля равна 1, для произвольного
+  // диапазона учитывает только пересечение с ним).
+  const pExpByWeek = {}
+  for (const e of pExpenses) pExpByWeek[e.week_start] = (pExpByWeek[e.week_start] || 0) + (Number(e.spend) || 0)
+  if (pFrom && pTo) {
+    for (const weekStart in pExpByWeek) {
+      const weekEnd = addDaysISO(weekStart, 6)
+      const overlapStart = weekStart > pFrom ? weekStart : pFrom
+      const overlapEnd = weekEnd < pTo ? weekEnd : pTo
+      const overlapDays = daysBetweenISO(overlapStart, overlapEnd) + 1
+      if (overlapDays <= 0) continue
+      pAgg.spend += (pExpByWeek[weekStart] / 7) * overlapDays
+    }
+  }
+  const pRates = {
+    cpl: pAgg.leads > 0 ? Math.round(pAgg.spend / pAgg.leads) : null,
+    cpql: pAgg.quals > 0 ? Math.round(pAgg.spend / pAgg.quals) : null,
+    cpm: pAgg.meetings > 0 ? Math.round(pAgg.spend / pAgg.meetings) : null,
+    cac: pAgg.deals > 0 ? Math.round(pAgg.spend / pAgg.deals) : null,
+    cr_lq: pAgg.leads > 0 ? Math.round((pAgg.quals / pAgg.leads) * 1000) / 10 : null,
+    cr_qm: pAgg.quals > 0 ? Math.round((pAgg.meetings / pAgg.quals) * 1000) / 10 : null,
+    cr_lo: pAgg.leads > 0 ? Math.round((pAgg.deals / pAgg.leads) * 1000) / 10 : null,
+    aov: pAgg.deals > 0 ? Math.round(pAgg.revenue / pAgg.deals) : null,
+    dup_rate: pAgg.leads > 0 ? Math.round((pAgg.duplicates / pAgg.leads) * 1000) / 10 : null,
+  }
+
+  // Разбивка по источникам — только количественные показатели и конверсии,
+  // без цен (расход/CPL и т.п. по отдельным источникам не показываем).
+  const pBySource = {}
+  for (const r of pDailyFacts) {
+    const key = r.source_id || 'unknown'
+    if (!pBySource[key]) pBySource[key] = { leads: 0, quals: 0, meetings: 0, deals: 0 }
+    pBySource[key].leads += r.leads || 0
+    pBySource[key].quals += r.quals || 0
+    pBySource[key].meetings += r.meetings || 0
+    pBySource[key].deals += r.deals || 0
+  }
+  const pSourceNameMap = {}
+  for (const s of sources) pSourceNameMap[s.id] = s.name
+  const pSourceRows = Object.entries(pBySource).map(([id, a]) => ({
+    id,
+    name: pSourceNameMap[id] || 'Без источника',
+    ...a,
+    cr_lq: a.leads > 0 ? Math.round((a.quals / a.leads) * 1000) / 10 : null,
+    cr_qm: a.quals > 0 ? Math.round((a.meetings / a.quals) * 1000) / 10 : null,
+    cr_lo: a.leads > 0 ? Math.round((a.deals / a.leads) * 1000) / 10 : null,
+  })).sort((a, b) => b.leads - a.leads)
+
+  const pPeriodLabel = pMode === 'month'
+    ? monthLabel(pMonth)
+    : pMode === 'week'
+      ? weekLabel(pWeek)
+      : (pFrom && pTo ? `${formatRangeDate(pFrom)} – ${formatRangeDate(pTo)}` : '')
+
   // Форма редактирования источника
   function SourceForm({ source, onSave, onCancel }) {
     const [form, setForm] = useState(source)
@@ -355,22 +531,6 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
       {/* ОБЗОР */}
       {tab === 'Обзор' && (
         <div>
-          <div className="metric-grid" style={{ marginBottom: 16 }}>
-            {[
-              { label: 'Лиды МТД', val: mtd?.leads_mtd || 0, type: null },
-              { label: 'Расход МТД', val: formatMoney(mtd?.spend_mtd), type: null },
-              { label: 'CPL', val: mtd?.cpl_mtd ? formatMoney(mtd.cpl_mtd) : '—', type: 'cpl', raw: mtd?.cpl_mtd, sub: 'порог 1 500 ₽' },
-              { label: 'CPQL', val: mtd?.cpql_mtd ? formatMoney(mtd.cpql_mtd) : '—', type: 'cpql', raw: mtd?.cpql_mtd, sub: 'порог 7 500 ₽' },
-              { label: 'CAC накопит.', val: mtd?.cac_mtd ? formatMoney(mtd.cac_mtd) : '—', type: 'cac', raw: mtd?.cac_mtd, sub: 'порог 75 000 ₽' },
-            ].map(card => (
-              <div key={card.label} className={`metric-card ${card.type ? metricCardClass(card.type, card.raw) : 'neutral'}`}>
-                <div className="metric-card-label">{card.label}</div>
-                <div className="metric-card-value" style={{ fontSize: typeof card.val === 'string' && card.val.length > 8 ? 14 : 20 }}>{card.val}</div>
-                {card.sub && <div className="metric-card-sub">{card.sub}</div>}
-              </div>
-            ))}
-          </div>
-
           {/* План подрядчика (ТЗ раздел 5.2) */}
           <div className="info-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
@@ -438,6 +598,116 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 План не задан — подрядчик не участвует в контроле отклонений на дашборде.
               </div>
+            )}
+          </div>
+
+          {/* Показатели подрядчика — совокупно по всем источникам, за выбранный период */}
+          <div className="info-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+              <div className="info-card-title" style={{ margin: 0 }}>Показатели подрядчика</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 24, padding: 3 }}>
+                  {['month', 'week', 'range'].map(m => (
+                    <button key={m} onClick={() => setPMode(m)} style={{
+                      padding: '5px 14px', borderRadius: 20, border: 'none', fontSize: 12, fontWeight: 500, cursor: 'pointer',
+                      background: pMode === m ? 'var(--green-dark)' : 'transparent',
+                      color: pMode === m ? '#fff' : 'var(--text-secondary)',
+                    }}>{m === 'month' ? 'Месяц' : m === 'week' ? 'Неделя' : 'Период'}</button>
+                  ))}
+                </div>
+                {pMode === 'month' ? (
+                  <select className="form-select" style={{ minWidth: 170 }} value={pMonth} onChange={e => setPMonth(e.target.value)}>
+                    {pAvailableMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                  </select>
+                ) : pMode === 'week' ? (
+                  <select className="form-select" style={{ minWidth: 170 }} value={pWeek} onChange={e => setPWeek(e.target.value)}>
+                    {pAvailableWeeks.length === 0
+                      ? <option value={getWeekStart()}>{weekLabel(getWeekStart())}</option>
+                      : pAvailableWeeks.map(w => <option key={w} value={w}>{weekLabel(w)}</option>)}
+                  </select>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input type="date" className="form-select" style={{ minWidth: 130 }} value={pRangeFrom} min={MIN_RANGE_DATE} max={pRangeTo} onChange={e => setPRangeFrom(e.target.value)} />
+                    <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    <input type="date" className="form-select" style={{ minWidth: 130 }} value={pRangeTo} min={pRangeFrom} max={todayISO()} onChange={e => setPRangeTo(e.target.value)} />
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>{pPeriodLabel}</div>
+
+            {pLoading ? (
+              <div className="loading">Загрузка...</div>
+            ) : (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 10 }}>
+                  {[
+                    { label: 'Расход', val: formatMoney(pAgg.spend) },
+                    { label: 'Лиды', val: pAgg.leads },
+                    { label: 'CPL', val: pRates.cpl ? formatMoney(pRates.cpl) : '—' },
+                    { label: 'Квалы', val: pAgg.quals },
+                    { label: 'CR(l→q)', val: pRates.cr_lq != null ? `${pRates.cr_lq}%` : '—' },
+                    { label: 'CPQL', val: pRates.cpql ? formatMoney(pRates.cpql) : '—' },
+                    { label: 'Встречи', val: pAgg.meetings },
+                    { label: 'CPM', val: pRates.cpm ? formatMoney(pRates.cpm) : '—' },
+                    { label: 'CR(q→m)', val: pRates.cr_qm != null ? `${pRates.cr_qm}%` : '—' },
+                    { label: 'Сделки', val: pAgg.deals },
+                    { label: 'CAC', val: pRates.cac ? formatMoney(pRates.cac) : '—' },
+                    { label: 'CR(l→o)', val: pRates.cr_lo != null ? `${pRates.cr_lo}%` : '—' },
+                    { label: 'Revenue', val: formatMoney(pAgg.revenue) },
+                    { label: 'AOV', val: pRates.aov ? formatMoney(pRates.aov) : '—' },
+                    { label: 'Дубли', val: pAgg.duplicates },
+                    { label: '% дублей', val: pRates.dup_rate != null ? `${pRates.dup_rate}%` : '—' },
+                  ].map(item => (
+                    <div key={item.label} style={{ background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '10px 12px' }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{item.label}</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{item.val}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {sources.length > 1 && (
+                  <div style={{ marginTop: 14 }}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setSourcesExpanded(v => !v)}>
+                      {sourcesExpanded ? '▴ Свернуть по источникам' : '▾ Показатели по источникам'}
+                    </button>
+                    {sourcesExpanded && (
+                      <div style={{ marginTop: 10, overflowX: 'auto' }}>
+                        <table className="table-compact">
+                          <thead>
+                            <tr>
+                              <th>Источник</th>
+                              <th style={{ textAlign: 'right' }}>Лиды</th>
+                              <th style={{ textAlign: 'right' }}>Квалы</th>
+                              <th style={{ textAlign: 'right' }}>CR(l→q)</th>
+                              <th style={{ textAlign: 'right' }}>Встречи</th>
+                              <th style={{ textAlign: 'right' }}>CR(q→m)</th>
+                              <th style={{ textAlign: 'right' }}>Сделки</th>
+                              <th style={{ textAlign: 'right' }}>CR(l→o)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pSourceRows.length === 0 ? (
+                              <tr><td colSpan={8} className="td-muted" style={{ textAlign: 'center', padding: 12 }}>Нет данных за период</td></tr>
+                            ) : pSourceRows.map(row => (
+                              <tr key={row.id}>
+                                <td>{row.name}</td>
+                                <td style={{ textAlign: 'right' }}>{row.leads}</td>
+                                <td style={{ textAlign: 'right' }}>{row.quals}</td>
+                                <td style={{ textAlign: 'right' }} className="td-muted">{row.cr_lq != null ? `${row.cr_lq}%` : '—'}</td>
+                                <td style={{ textAlign: 'right' }}>{row.meetings}</td>
+                                <td style={{ textAlign: 'right' }} className="td-muted">{row.cr_qm != null ? `${row.cr_qm}%` : '—'}</td>
+                                <td style={{ textAlign: 'right' }}>{row.deals}</td>
+                                <td style={{ textAlign: 'right' }} className="td-muted">{row.cr_lo != null ? `${row.cr_lo}%` : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
 
