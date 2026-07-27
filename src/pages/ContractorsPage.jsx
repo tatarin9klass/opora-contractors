@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase.js'
 import { getStatusClass, cplClass, cpqlClass, cacClass, dupRateClass, formatMoney } from '../lib/helpers.js'
-import { weekStart as getWeekStart, todayISO, periodPaceRatio } from '../lib/dateContext.js'
+import { weekStart as getWeekStart, todayISO, periodPaceRatio, weekStartOf, addDaysISO, daysBetweenISO } from '../lib/dateContext.js'
 import AddContractorModal from '../components/AddContractorModal.jsx'
 
 const STATUS_FILTERS = [
@@ -50,11 +50,23 @@ const DEVIATION_COST_METRICS = new Set(['spend'])
 const DEVIATION_THRESHOLD = 0.2
 const WEEK_RATIO = 1 / 4.33
 
+// Системный импорт данных через приложение начался с 16 июля 2026 — выбор
+// произвольного диапазона дат раньше этой даты не имеет смысла (данных нет).
+const MIN_RANGE_DATE = '2026-07-16'
+
+function formatRangeDate(iso) {
+  return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
 // paceRatio — доля текущей недели/месяца, которая уже прошла (1 для уже
 // завершившегося периода) — план сравнивается не с целым периодом, а с тем,
 // что должно было накопиться к сегодняшнему дню, иначе 1 числа месяца план
 // всегда выглядит проваленным.
 function hasDeviationAlert(fact, target, mode, paceRatio) {
+  // Личный план подрядчика — месячная величина; для произвольного диапазона
+  // дат корректно привести план к периоду нельзя (диапазон может пересекать
+  // несколько месяцев неравномерно), поэтому в этом режиме алерт не считаем.
+  if (mode === 'range') return false
   if (!target) return false
   const pairs = [
     ['spend', fact.spend, target.plan_spend],
@@ -78,6 +90,11 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
   const [mode, setMode] = useState('week')
   const [selectedWeek, setSelectedWeek] = useState(getWeekStart())
   const [selectedMonth, setSelectedMonth] = useState(monthKey())
+  const [rangeFrom, setRangeFrom] = useState(MIN_RANGE_DATE)
+  const [rangeTo, setRangeTo] = useState(todayISO())
+  const [rangeDailyFacts, setRangeDailyFacts] = useState([])
+  const [rangeExpenses, setRangeExpenses] = useState([])
+  const [rangeLoading, setRangeLoading] = useState(false)
   const [rows, setRows] = useState([])
   const [targets, setTargets] = useState({})
   const [weeklyStats, setWeeklyStats] = useState([])
@@ -137,6 +154,35 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     supabase.from('contractor_types').select('*').order('name').then(({ data }) => setTypes(data || []))
   }, [])
 
+  // Режим "Период" — произвольный диапазон дат, не привязанный к неделям.
+  // Лиды/квалы/встречи/сделки/revenue/дубли — реальные факты по дням
+  // (daily_facts). Расход фиксируется только понедельно (weekly_expenses),
+  // поэтому для диапазона, не совпадающего с целыми неделями, недельный
+  // расход прорируется по дням, попавшим в выбранный диапазон.
+  useEffect(() => {
+    if (mode !== 'range') return
+    const from = rangeFrom < MIN_RANGE_DATE ? MIN_RANGE_DATE : rangeFrom
+    const to = rangeTo < from ? from : rangeTo
+    async function loadRange() {
+      setRangeLoading(true)
+      const [{ data: facts }, { data: exp }] = await Promise.all([
+        supabase.from('daily_facts')
+          .select('contractor_id, fact_date, leads, quals, meetings, deals, revenue, duplicates')
+          .not('contractor_id', 'is', null)
+          .gte('fact_date', from)
+          .lte('fact_date', to),
+        supabase.from('weekly_expenses')
+          .select('contractor_id, week_start, spend')
+          .gte('week_start', weekStartOf(from))
+          .lte('week_start', weekStartOf(to)),
+      ])
+      setRangeDailyFacts(facts || [])
+      setRangeExpenses(exp || [])
+      setRangeLoading(false)
+    }
+    loadRange()
+  }, [mode, rangeFrom, rangeTo])
+
   function toggleSort(key) {
     if (sortKey === key) {
       setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
@@ -146,25 +192,65 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     }
   }
 
-  // Факт за выбранный период (неделя/месяц) по каждому подрядчику — из
-  // weekly_stats, тот же источник правды, что и на дашборде.
+  // Факт за выбранный период по каждому подрядчику. Неделя/месяц — из
+  // weekly_stats (тот же источник правды, что и на дашборде). Произвольный
+  // диапазон дат — напрямую из daily_facts (leads/quals/meetings/deals/
+  // revenue/duplicates — реальные ежедневные факты) + прорированный по дням
+  // расход из weekly_expenses (расход фиксируется только понедельно).
+  const rangeClampedFrom = rangeFrom < MIN_RANGE_DATE ? MIN_RANGE_DATE : rangeFrom
+  const rangeClampedTo = rangeTo < rangeClampedFrom ? rangeClampedFrom : rangeTo
+
   const periodRows = mode === 'month'
     ? weeklyStats.filter(r => r.week_start >= selectedMonth && r.week_start < nextMonth(selectedMonth))
-    : weeklyStats.filter(r => r.week_start === selectedWeek)
+    : mode === 'week'
+      ? weeklyStats.filter(r => r.week_start === selectedWeek)
+      : []
 
   const periodByContractor = {}
-  periodRows.forEach(r => {
-    if (!r.contractor_id) return
-    if (!periodByContractor[r.contractor_id]) periodByContractor[r.contractor_id] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0, duplicates: 0 }
-    const a = periodByContractor[r.contractor_id]
-    a.leads += r.leads || 0
-    a.quals += r.quals || 0
-    a.meetings += r.meetings || 0
-    a.deals += r.deals || 0
-    a.spend += Number(r.spend) || 0
-    a.revenue += Number(r.revenue) || 0
-    a.duplicates += r.duplicates || 0
-  })
+  if (mode === 'range') {
+    for (const r of rangeDailyFacts) {
+      if (!r.contractor_id) continue
+      if (!periodByContractor[r.contractor_id]) periodByContractor[r.contractor_id] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0, duplicates: 0 }
+      const a = periodByContractor[r.contractor_id]
+      a.leads += r.leads || 0
+      a.quals += r.quals || 0
+      a.meetings += r.meetings || 0
+      a.deals += r.deals || 0
+      a.revenue += Number(r.revenue) || 0
+      a.duplicates += r.duplicates || 0
+    }
+    // Расход по неделям, пересекающимся с диапазоном, делится на 7 дней и
+    // берётся доля, попавшая в диапазон (та же идея, что и proration плана
+    // на стыке месяцев — см. weeklyPlanFromMonthly).
+    const expByContractorWeek = {}
+    for (const e of rangeExpenses) {
+      const key = `${e.contractor_id}|${e.week_start}`
+      expByContractorWeek[key] = (expByContractorWeek[key] || 0) + (Number(e.spend) || 0)
+    }
+    for (const key in expByContractorWeek) {
+      const [contractorId, weekStart] = key.split('|')
+      const weekEnd = addDaysISO(weekStart, 6)
+      const overlapStart = weekStart > rangeClampedFrom ? weekStart : rangeClampedFrom
+      const overlapEnd = weekEnd < rangeClampedTo ? weekEnd : rangeClampedTo
+      const overlapDays = daysBetweenISO(overlapStart, overlapEnd) + 1
+      if (overlapDays <= 0) continue
+      if (!periodByContractor[contractorId]) periodByContractor[contractorId] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0, duplicates: 0 }
+      periodByContractor[contractorId].spend += (expByContractorWeek[key] / 7) * overlapDays
+    }
+  } else {
+    periodRows.forEach(r => {
+      if (!r.contractor_id) return
+      if (!periodByContractor[r.contractor_id]) periodByContractor[r.contractor_id] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0, duplicates: 0 }
+      const a = periodByContractor[r.contractor_id]
+      a.leads += r.leads || 0
+      a.quals += r.quals || 0
+      a.meetings += r.meetings || 0
+      a.deals += r.deals || 0
+      a.spend += Number(r.spend) || 0
+      a.revenue += Number(r.revenue) || 0
+      a.duplicates += r.duplicates || 0
+    })
+  }
 
   // Считает CPL/CPQL/CPM/CAC/CR% из суммарных чисел — та же формула, что и
   // в aggregate() на дашборде (отношение сумм, а не среднее по строкам).
@@ -187,23 +273,28 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     return { ...a, ...deriveRates(a) }
   }
 
-  // Итоговая строка таблицы — те же суммарные цифры за период, что и на
-  // дашборде (aggregate(periodRows) по ВСЕМ подрядчикам), а не только по
-  // отфильтрованным строкам этой таблицы.
-  const totalsRaw = periodRows.reduce((acc, r) => {
-    acc.spend += Number(r.spend) || 0
-    acc.leads += r.leads || 0
-    acc.quals += r.quals || 0
-    acc.meetings += r.meetings || 0
-    acc.deals += r.deals || 0
-    acc.revenue += Number(r.revenue) || 0
-    acc.duplicates += r.duplicates || 0
+  // Итоговая строка таблицы — суммарные цифры за период по ВСЕМ подрядчикам
+  // (не только по отфильтрованным строкам этой таблицы), из periodByContractor —
+  // он уже построен единообразно для всех трёх режимов выше.
+  const totalsRaw = Object.values(periodByContractor).reduce((acc, a) => {
+    acc.spend += a.spend || 0
+    acc.leads += a.leads || 0
+    acc.quals += a.quals || 0
+    acc.meetings += a.meetings || 0
+    acc.deals += a.deals || 0
+    acc.revenue += a.revenue || 0
+    acc.duplicates += a.duplicates || 0
     return acc
   }, { spend: 0, leads: 0, quals: 0, meetings: 0, deals: 0, revenue: 0, duplicates: 0 })
   const totalsFact = { ...totalsRaw, ...deriveRates(totalsRaw) }
 
-  const periodLabel = mode === 'month' ? monthLabel(selectedMonth) : weekLabel(selectedWeek)
-  const paceRatio = periodPaceRatio(mode, mode === 'week' ? selectedWeek : selectedMonth)
+  const periodLabel = mode === 'month'
+    ? monthLabel(selectedMonth)
+    : mode === 'week'
+      ? weekLabel(selectedWeek)
+      : `${formatRangeDate(rangeClampedFrom)} – ${formatRangeDate(rangeClampedTo)}`
+  // paceRatio для режима "Период" не считается (см. hasDeviationAlert) — 1 как заглушка.
+  const paceRatio = mode === 'range' ? 1 : periodPaceRatio(mode, mode === 'week' ? selectedWeek : selectedMonth)
 
   // График "Лиды/Квалы/Встречи по дням" (текущий месяц, суммарно по всем
   // подрядчикам) + линия "план на день по квалам" — план на месяц минус уже
@@ -296,26 +387,41 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ display: 'flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 24, padding: 3 }}>
-            {['month', 'week'].map(m => (
+            {['month', 'week', 'range'].map(m => (
               <button key={m} onClick={() => setMode(m)} style={{
                 padding: '6px 16px', borderRadius: 20, border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer',
                 background: mode === m ? 'var(--green-dark)' : 'transparent',
                 color: mode === m ? '#fff' : 'var(--text-secondary)',
                 transition: 'all 0.15s'
-              }}>{m === 'month' ? 'Месяц' : 'Неделя'}</button>
+              }}>{m === 'month' ? 'Месяц' : m === 'week' ? 'Неделя' : 'Период'}</button>
             ))}
           </div>
           {mode === 'month' ? (
             <select className="form-select" style={{ minWidth: 200 }} value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
               {availableMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
             </select>
-          ) : (
+          ) : mode === 'week' ? (
             <select className="form-select" style={{ minWidth: 200 }} value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}>
               {availableWeeks.length === 0
                 ? <option value={getWeekStart()}>{weekLabel(getWeekStart())}</option>
                 : availableWeeks.map(w => <option key={w} value={w}>{weekLabel(w)}</option>)
               }
             </select>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="date" className="form-select" style={{ minWidth: 150 }}
+                value={rangeFrom} min={MIN_RANGE_DATE} max={rangeTo}
+                onChange={e => setRangeFrom(e.target.value)}
+              />
+              <span style={{ color: 'var(--text-muted)' }}>—</span>
+              <input
+                type="date" className="form-select" style={{ minWidth: 150 }}
+                value={rangeTo} min={rangeFrom} max={todayISO()}
+                onChange={e => setRangeTo(e.target.value)}
+              />
+              {rangeLoading && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Загрузка...</span>}
+            </div>
           )}
         </div>
       </div>
@@ -387,7 +493,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
         </div>
 
         <div className="table-scroll">
-          {loading ? (
+          {loading || (mode === 'range' && rangeLoading) ? (
             <div className="loading">Загрузка...</div>
           ) : sortedRows.length === 0 ? (
             <div className="empty-state">
