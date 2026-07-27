@@ -52,6 +52,10 @@ const PAYMENT_TYPE_LABELS = {
   'Смешанная': 'Смешанная',
 }
 
+// Единственный тип оплаты, где расход можно автоматизировать через Google
+// Таблицу подрядчика (Фикс/Абонентка уже полностью авто и без таблиц).
+const PARTIAL_TYPE = 'Абонентка + бюджет'
+
 export default function PassportPage({ contractorId, onBack, isAdmin }) {
   const [tab, setTab] = useState('Обзор')
   const [contractor, setContractor] = useState(null)
@@ -205,6 +209,8 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
       cpl_rate: source.cpl_rate ? Number(source.cpl_rate) : null,
       retainer: source.retainer ? Number(source.retainer) : null,
       status: source.status || 'активен',
+      expense_mode: source.expense_mode || 'manual',
+      expense_sheet_url: source.expense_mode === 'sheet' ? (source.expense_sheet_url || null) : null,
     }
     if (source.id) {
       await supabase.from('sources').update(payload).eq('id', source.id)
@@ -472,6 +478,32 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
             )}
           </div>
           <div className="form-group"><label className="form-label">Абонентка (₽)</label><input className="form-input" type="number" value={form.retainer || ''} onChange={e => set('retainer', e.target.value)} placeholder="0" /></div>
+          {selectedTypeName === PARTIAL_TYPE && (
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 10, paddingTop: 10 }}>
+              <div className="form-group">
+                <label className="form-label">Расход (рекламный бюджет)</label>
+                <div style={{ display: 'flex', gap: 14 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="radio" checked={(form.expense_mode || 'manual') === 'manual'} onChange={() => set('expense_mode', 'manual')} />
+                    Вручную раз в неделю
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="radio" checked={form.expense_mode === 'sheet'} onChange={() => set('expense_mode', 'sheet')} />
+                    Через Google Таблицу
+                  </label>
+                </div>
+              </div>
+              {form.expense_mode === 'sheet' && (
+                <div className="form-group">
+                  <label className="form-label">Ссылка на Google Таблицу</label>
+                  <input className="form-input" value={form.expense_sheet_url || ''} onChange={e => set('expense_sheet_url', e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..." />
+                  <div className="form-hint">
+                    Таблица должна быть по шаблону: столбец A — дата (ГГГГ-ММ-ДД), столбец B — расход за день, с первой строки данных (без заголовка). Таблицу нужно расшарить на email сервис-аккаунта — уточни его у администратора.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         {form.id && (
           <div className="form-group">
@@ -884,6 +916,7 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
                             <span className={`badge ${s.status === 'активен' ? 'badge-active' : 'badge-pause'}`}>{s.status}</span>
                             {s.payment_types?.name && <span className="badge badge-test">{s.payment_types.name}</span>}
                             {s.expense_group_id && <span className="badge badge-control">🔗 объединено для расхода</span>}
+                            {s.expense_mode === 'sheet' && <span className="badge badge-control">📊 расход через Google Таблицу</span>}
                           </div>
                           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                             {s.roistat_marker && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>🏷 <code style={{ background: 'var(--bg)', padding: '1px 4px', borderRadius: 3 }}>{s.roistat_marker}</code></span>}

@@ -149,6 +149,14 @@ export default function WeeklyExpensesPage() {
       return { mode: 'auto', total: 0, detail: 'бесплатный трафик — расход не вводится' }
     }
     if (paymentName === PARTIAL) {
+      // Рекламный бюджет автоматизирован через Google Таблицу подрядчика —
+      // весь недельный расход (абонентка + бюджет) уже посчитан и записан в
+      // weekly_expenses самим импортом (см. bitrix-import), здесь только
+      // показываем итог, без ручного ввода.
+      if (primary.expense_mode === 'sheet') {
+        const total = existing ? Math.round(existing.spend) : 0
+        return { mode: 'auto', total, detail: '📊 бюджет из Google Таблицы (интеграция)' }
+      }
       const autoPortion = Math.round(retainerWeekly)
       const manualDefault = existing ? Math.max(0, Math.round(existing.spend - autoPortion)) : ''
       return { mode: 'partial', autoPortion, manualDefault, detail: `+ абонентка ${formatMoney(autoPortion)} / нед.` }

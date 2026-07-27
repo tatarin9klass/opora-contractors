@@ -44,6 +44,15 @@ const DEAL_SAFETY_CAP = 5000; // предохранитель на случай,
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+// Автоматизация расхода "Абонентка + бюджет" через Google Таблицу подрядчика —
+// сервис-аккаунт Google Cloud с включённым Sheets API (см. инструкцию в
+// docs, либо у администратора). Секреты задаются в Supabase Dashboard →
+// Edge Functions → bitrix-import → Secrets. Приватный ключ хранится с
+// экранированными \n (буквально символы "\n"), поэтому при чтении их нужно
+// развернуть в настоящие переводы строки.
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL");
+const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY")?.replace(/\\n/g, "\n");
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -195,6 +204,163 @@ function toDateMsk(isoStr: string): string {
   if (!isoStr) return "";
   const msk = new Date(new Date(isoStr).getTime() + 3 * 60 * 60 * 1000);
   return msk.toISOString().split("T")[0];
+}
+
+// ---- Google Sheets: авто-расход для "Абонентка + бюджет" ----
+
+function base64url(bytes: Uint8Array): string {
+  let str = btoa(String.fromCharCode(...bytes));
+  return str.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function importGooglePrivateKey(pem: string): Promise<CryptoKey> {
+  const pemBody = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/, "")
+    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/\s/g, "");
+  const binaryDer = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
+  return crypto.subtle.importKey(
+    "pkcs8",
+    binaryDer.buffer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+}
+
+// OAuth2 service-account flow (JWT bearer) — без клиентской библиотеки Google,
+// вручную через Web Crypto (доступен в Deno) — стандартный способ для Edge Functions.
+async function getGoogleAccessToken(clientEmail: string, privateKeyPem: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "RS256", typ: "JWT" };
+  const claims = {
+    iss: clientEmail,
+    scope: "https://www.googleapis.com/auth/spreadsheets.readonly",
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+  };
+  const encHeader = base64url(new TextEncoder().encode(JSON.stringify(header)));
+  const encClaims = base64url(new TextEncoder().encode(JSON.stringify(claims)));
+  const signingInput = `${encHeader}.${encClaims}`;
+  const key = await importGooglePrivateKey(privateKeyPem);
+  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(signingInput));
+  const jwt = `${signingInput}.${base64url(new Uint8Array(signature))}`;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${encodeURIComponent(jwt)}`,
+  });
+  const json = await res.json();
+  if (!json.access_token) throw new Error(`Google OAuth error: ${JSON.stringify(json)}`);
+  return json.access_token;
+}
+
+function extractSheetId(url: string): string | null {
+  const m = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  if (m) return m[1];
+  return /^[a-zA-Z0-9-_]{20,}$/.test(url.trim()) ? url.trim() : null;
+}
+
+// Жёсткий шаблон: столбец A — дата (ГГГГ-ММ-ДД, дополнительно принимаем
+// ДД.ММ.ГГГГ — так Google Таблицы часто форматируют дату сами), столбец B —
+// расход за этот день. Строка, которую не удалось разобрать, просто пропускается.
+function parseSheetDate(raw: string): string | null {
+  const s = (raw || "").trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return null;
+}
+
+function parseSheetSpend(raw: string): number {
+  const cleaned = (raw || "").replace(/[^\d,.-]/g, "").replace(",", ".");
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+}
+
+// Для каждого источника с expense_mode='sheet' читает его Google Таблицу
+// целиком, группирует расход по отчётным неделям (чт-ср) и перезаписывает
+// weekly_expenses (абонентка + бюджет из таблицы) — полный ресинк при каждом
+// запуске, идемпотентно. Замороженные недели (weekly_snapshots) не трогаем.
+async function syncSheetExpenses(supabase: any, accessToken: string) {
+  const { data: sheetSources } = await supabase
+    .from("sources")
+    .select("id, contractor_id, retainer, expense_sheet_url")
+    .eq("expense_mode", "sheet")
+    .not("expense_sheet_url", "is", null);
+
+  const results: any[] = [];
+  if (!sheetSources || sheetSources.length === 0) return results;
+
+  const { data: frozenRows } = await supabase.from("weekly_snapshots").select("week_start");
+  const frozenWeeks = new Set((frozenRows || []).map((r: any) => r.week_start));
+
+  for (const src of sheetSources) {
+    try {
+      const sheetId = extractSheetId(src.expense_sheet_url);
+      if (!sheetId) throw new Error("Не удалось извлечь ID таблицы из ссылки");
+
+      const metaRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      const meta = await metaRes.json();
+      if (meta.error) throw new Error(meta.error.message || "Ошибка чтения таблицы");
+      const title = meta.sheets?.[0]?.properties?.title || "Sheet1";
+
+      const valuesRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(title)}!A:B?valueRenderOption=FORMATTED_VALUE`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      const values = await valuesRes.json();
+      if (values.error) throw new Error(values.error.message || "Ошибка чтения диапазона");
+      const rows: string[][] = values.values || [];
+
+      const byWeek: Record<string, number> = {};
+      for (const row of rows) {
+        const dateStr = parseSheetDate(row[0]);
+        if (!dateStr) continue; // пропускаем заголовок и нераспознанные строки
+        const spend = parseSheetSpend(row[1]);
+        const weekStart = getWeekStartForDate(new Date(`${dateStr}T12:00:00`));
+        byWeek[weekStart] = (byWeek[weekStart] || 0) + spend;
+      }
+
+      const retainerWeekly = src.retainer ? (Number(src.retainer) / 30.41) * 7 : 0;
+      let weeksUpdated = 0;
+      for (const weekStart in byWeek) {
+        if (frozenWeeks.has(weekStart)) continue;
+        const total = Math.round(retainerWeekly + byWeek[weekStart]);
+        const { data: existing } = await supabase
+          .from("weekly_expenses")
+          .select("id")
+          .eq("source_id", src.id)
+          .eq("week_start", weekStart)
+          .maybeSingle();
+        const payload = {
+          source_id: src.id,
+          contractor_id: src.contractor_id,
+          week_start: weekStart,
+          spend: total,
+          is_auto_calculated: true,
+          entered_by: "Google Таблица (авто)",
+          updated_at: new Date().toISOString(),
+        };
+        if (existing) {
+          await supabase.from("weekly_expenses").update(payload).eq("id", existing.id);
+        } else {
+          await supabase.from("weekly_expenses").insert(payload);
+        }
+        weeksUpdated++;
+      }
+      results.push({ source_id: src.id, ok: true, weeks_updated: weeksUpdated });
+    } catch (e) {
+      results.push({ source_id: src.id, ok: false, error: String(e) });
+    }
+  }
+  return results;
 }
 
 console.info("server started");
@@ -359,6 +525,20 @@ Deno.serve(async (req: Request) => {
       results.push({ source: sourceName, matched: !!matched, leads: leadsCount, quals: qualsCount, meetings: meetingsCount, deals: dealsCount, revenue: revenueSum, duplicates: duplicatesCount });
     }
 
+    // Расход "Абонентка + бюджет" через Google Таблицу — тем же запуском, что
+    // и импорт из Битрикса (без отдельного расписания). Секреты не заданы —
+    // просто пропускаем, это не ошибка (интеграция может быть ещё не настроена).
+    let sheetExpensesSync: any[] = [];
+    if (GOOGLE_SERVICE_ACCOUNT_EMAIL && GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+      try {
+        const accessToken = await getGoogleAccessToken(GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY);
+        sheetExpensesSync = await syncSheetExpenses(supabase, accessToken);
+      } catch (e) {
+        console.error("Google Sheets sync error:", String(e));
+        sheetExpensesSync = [{ ok: false, error: String(e) }];
+      }
+    }
+
     return new Response(JSON.stringify({
       success: true, date: targetDate, week_start: targetWeekStart,
       leads_for_day: leadsForDay.length, quals_for_day: qualsForDay.length, deals_for_day: dealsForDay.length, meetings_for_day: meetingsForDay.length,
@@ -367,6 +547,7 @@ Deno.serve(async (req: Request) => {
       quals_filter_likely_broken: qualsResult.filterLikelyBroken,
       deals_filter_likely_broken: dealsResult.filterLikelyBroken,
       processed: results, unmatched_sources: unmatched,
+      sheet_expenses_sync: sheetExpensesSync,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {
