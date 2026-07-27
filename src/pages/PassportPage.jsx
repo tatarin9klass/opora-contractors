@@ -615,23 +615,27 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
                     }}>{m === 'month' ? 'Месяц' : m === 'week' ? 'Неделя' : 'Период'}</button>
                   ))}
                 </div>
-                {pMode === 'month' ? (
-                  <select className="form-select" style={{ minWidth: 170 }} value={pMonth} onChange={e => setPMonth(e.target.value)}>
-                    {pAvailableMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
-                  </select>
-                ) : pMode === 'week' ? (
-                  <select className="form-select" style={{ minWidth: 170 }} value={pWeek} onChange={e => setPWeek(e.target.value)}>
-                    {pAvailableWeeks.length === 0
-                      ? <option value={getWeekStart()}>{weekLabel(getWeekStart())}</option>
-                      : pAvailableWeeks.map(w => <option key={w} value={w}>{weekLabel(w)}</option>)}
-                  </select>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <input type="date" className="form-select" style={{ minWidth: 130 }} value={pRangeFrom} min={MIN_RANGE_DATE} max={pRangeTo} onChange={e => setPRangeFrom(e.target.value)} />
-                    <span style={{ color: 'var(--text-muted)' }}>—</span>
-                    <input type="date" className="form-select" style={{ minWidth: 130 }} value={pRangeTo} min={pRangeFrom} max={todayISO()} onChange={e => setPRangeTo(e.target.value)} />
-                  </div>
-                )}
+                {/* Фиксированная ширина — чтобы переключение Месяц/Неделя/Период
+                    не дёргало layout (select и пара date-инпутов разной ширины). */}
+                <div style={{ width: 280, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {pMode === 'month' ? (
+                    <select className="form-select" style={{ width: '100%' }} value={pMonth} onChange={e => setPMonth(e.target.value)}>
+                      {pAvailableMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                    </select>
+                  ) : pMode === 'week' ? (
+                    <select className="form-select" style={{ width: '100%' }} value={pWeek} onChange={e => setPWeek(e.target.value)}>
+                      {pAvailableWeeks.length === 0
+                        ? <option value={getWeekStart()}>{weekLabel(getWeekStart())}</option>
+                        : pAvailableWeeks.map(w => <option key={w} value={w}>{weekLabel(w)}</option>)}
+                    </select>
+                  ) : (
+                    <>
+                      <input type="date" className="form-select" style={{ flex: 1, minWidth: 0 }} value={pRangeFrom} min={MIN_RANGE_DATE} max={pRangeTo} onChange={e => setPRangeFrom(e.target.value)} />
+                      <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>—</span>
+                      <input type="date" className="form-select" style={{ flex: 1, minWidth: 0 }} value={pRangeTo} min={pRangeFrom} max={todayISO()} onChange={e => setPRangeTo(e.target.value)} />
+                    </>
+                  )}
+                </div>
               </div>
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>{pPeriodLabel}</div>
