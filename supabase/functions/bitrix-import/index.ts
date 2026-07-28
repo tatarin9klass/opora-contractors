@@ -214,10 +214,16 @@ function base64url(bytes: Uint8Array): string {
 }
 
 async function importGooglePrivateKey(pem: string): Promise<CryptoKey> {
+  // Устойчиво к тому, как секрет реально сохранился в Supabase (буквальные
+  // "\n", настоящие переводы строк, случайно попавшие кавычки при копировании
+  // из JSON) — сначала убираем сам escape-символ \n целиком (чтобы буква "n"
+  // не осталась в теле base64), потом оставляем только валидные символы
+  // base64: любой другой мусор (пробелы, кавычки, переводы строк) отсеивается.
   const pemBody = pem
-    .replace(/-----BEGIN PRIVATE KEY-----/, "")
-    .replace(/-----END PRIVATE KEY-----/, "")
-    .replace(/\s/g, "");
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\\n/g, "")
+    .replace(/[^A-Za-z0-9+/=]/g, "");
   const binaryDer = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
   return crypto.subtle.importKey(
     "pkcs8",
