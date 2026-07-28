@@ -50,6 +50,10 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 // Edge Functions → bitrix-import → Secrets. Приватный ключ хранится с
 // экранированными \n (буквально символы "\n"), поэтому при чтении их нужно
 // развернуть в настоящие переводы строки.
+// ВРЕМЕННО ОТКЛЮЧЕНО по запросу — вернёмся к этому способу позже (пока в
+// работе интеграция через Яндекс Директ). Код не удалён, просто не
+// выполняется: переключить обратно — false -> true.
+const SHEET_EXPENSES_SYNC_ENABLED = false;
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL");
 const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY")?.replace(/\\n/g, "\n");
 
@@ -535,7 +539,7 @@ Deno.serve(async (req: Request) => {
     // и импорт из Битрикса (без отдельного расписания). Секреты не заданы —
     // просто пропускаем, это не ошибка (интеграция может быть ещё не настроена).
     let sheetExpensesSync: any[] = [];
-    if (GOOGLE_SERVICE_ACCOUNT_EMAIL && GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+    if (SHEET_EXPENSES_SYNC_ENABLED && GOOGLE_SERVICE_ACCOUNT_EMAIL && GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
       try {
         const accessToken = await getGoogleAccessToken(GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY);
         sheetExpensesSync = await syncSheetExpenses(supabase, accessToken);
