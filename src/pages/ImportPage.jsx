@@ -15,6 +15,7 @@ export default function ImportPage() {
   const [unmatchedList, setUnmatchedList] = useState([])
   const [contractors, setContractors] = useState([])
   const [frozenWeeks, setFrozenWeeks] = useState(new Set())
+  const [sourceLabels, setSourceLabels] = useState({})
 
   // computeDateContext() пересчитывается не только при монтировании, но и при
   // возврате фокуса на вкладку — чтобы "сегодня" не залипало, если вкладка
@@ -51,6 +52,15 @@ export default function ImportPage() {
     // ТЗ раздел 3: замороженная неделя выпадает из редактируемого окна импорта.
     supabase.from('weekly_snapshots').select('week_start').then(({ data }) => {
       setFrozenWeeks(new Set((data || []).map(r => r.week_start)))
+    })
+    // Для читаемого отображения результата синка расхода из Google Таблиц
+    // (bitrix-import отдаёт только source_id, без имени).
+    supabase.from('sources').select('id, name, contractors(short_name, name)').then(({ data }) => {
+      const map = {}
+      ;(data || []).forEach(s => {
+        map[s.id] = `${s.contractors?.short_name || s.contractors?.name || '—'} · ${s.name}`
+      })
+      setSourceLabels(map)
     })
   }, [])
 
@@ -167,6 +177,30 @@ export default function ImportPage() {
             )}
             {(!result.processed || result.processed.length === 0) && (
               <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>За этот день данных с источниками ofbfl- не найдено.</div>
+            )}
+
+            {result.sheet_expenses_sync?.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Расход из Google Таблиц</div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Источник</th>
+                      <th>Статус</th>
+                      <th>Детали</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.sheet_expenses_sync.map((r, i) => (
+                      <tr key={i}>
+                        <td>{sourceLabels[r.source_id] || r.source_id || '—'}</td>
+                        <td>{r.ok ? <span className="badge badge-active">ок</span> : <span className="badge badge-off">ошибка</span>}</td>
+                        <td className="td-muted" style={{ fontSize: 12 }}>{r.ok ? `обновлено недель: ${r.weeks_updated}` : r.error}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}
