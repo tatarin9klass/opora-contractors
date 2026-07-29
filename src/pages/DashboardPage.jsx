@@ -106,8 +106,16 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
   async function load() {
     setLoading(true)
     const [statsRes, contractorsRes, targetsRes, historicalRes, allTargetsRes] = await Promise.all([
-      // ИСТОЧНИК ПРАВДЫ: weekly_stats (daily_facts + weekly_expenses), не weekly_facts
-      supabase.from('weekly_stats').select('*, contractors(id, name, short_name, contractor_statuses(name, is_active))'),
+      // ИСТОЧНИК ПРАВДЫ: weekly_stats (daily_facts + weekly_expenses), не weekly_facts.
+      // ИСПРАВЛЕНО: раньше здесь был довесок "*, contractors(...)" (PostgREST
+      // embedding) — после того как weekly_stats переписали через WITH/UNION
+      // (фикс пропадающих недель без лидов), PostgREST перестал понимать
+      // связь weekly_stats -> contractors и отвечал 400 на ВЕСЬ запрос, из-за
+      // чего live-недели (в т.ч. текущая) исчезали с дашборда целиком, а
+      // оставались только исторические (из отдельной таблицы). Имя
+      // подрядчика для снапшота заморозки теперь берётся из отдельно
+      // загруженного contractor_mtd (см. contractorNameMap ниже), без embed.
+      supabase.from('weekly_stats').select('*'),
       supabase.from('contractor_mtd').select('*'),
       supabase.from('contractor_targets').select('*'),
       // Историческая сводка по компании целиком (не по подрядчикам), присланная
@@ -131,7 +139,6 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
       deals: h.deals,
       spend: h.spend,
       revenue: h.revenue,
-      contractors: null,
     }))
     // Историческая неделя ПЕРЕЗАПИСЫВАЕТ живые данные за ту же неделю, а не
     // складывается с ними — если по неделе уже успел натечь live-импорт из
@@ -243,6 +250,10 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
   const chartAxisKind = chartAxisKinds.size === 1 ? [...chartAxisKinds][0] : 'number'
 
   const weekRatioForFreeze = 1 / 4.33
+  // Имя подрядчика для снапшота заморозки — из contractor_mtd (уже загружен
+  // отдельно, без embed через weekly_stats — см. комментарий в load()).
+  const contractorNameMap = {}
+  for (const c of contractors) contractorNameMap[c.contractor_id] = c.short_name || c.name || null
 
   // ТЗ раздел 9: заморозка — ручное действие, фиксирует факты и действовавший
   // на тот момент план по каждому подрядчику навсегда (пока их не разморозит
@@ -264,7 +275,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
         week_start: selectedWeek,
         week_end: weekEnd,
         contractor_id: r.contractor_id,
-        contractor_name: r.contractors?.short_name || r.contractors?.name || null,
+        contractor_name: contractorNameMap[r.contractor_id] || null,
         leads, quals, meetings, deals, spend, revenue,
         cpl: leads > 0 ? Math.round(spend / leads) : null,
         cpql: quals > 0 ? Math.round(spend / quals) : null,
@@ -293,7 +304,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
       if (!byContractor[r.contractor_id]) {
         byContractor[r.contractor_id] = {
           contractor_id: r.contractor_id,
-          contractor_name: r.contractors?.short_name || r.contractors?.name || null,
+          contractor_name: contractorNameMap[r.contractor_id] || null,
           leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0,
         }
       }
