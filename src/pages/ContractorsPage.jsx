@@ -334,7 +334,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     { key: 'cpm', label: 'CPM', field: r => periodFact(r.contractor_id).cpm ?? -1 },
     { key: 'cr_qm', label: 'CR(q→m)', field: r => periodFact(r.contractor_id).cr_qm ?? -1 },
     { key: 'deals', label: 'Сделки', field: r => periodFact(r.contractor_id).deals },
-    { key: 'cac', label: 'CAC', field: r => periodFact(r.contractor_id).cac ?? -1 },
+    { key: 'cac', label: 'CPO', field: r => periodFact(r.contractor_id).cac ?? -1 },
     { key: 'cr_lo', label: 'CR(l→o)', field: r => periodFact(r.contractor_id).cr_lo ?? -1 },
     { key: 'revenue', label: 'Revenue', field: r => periodFact(r.contractor_id).revenue },
   ]

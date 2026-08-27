@@ -51,7 +51,7 @@ const METRIC_GROUPS = [
   { key: 'cpm', label: 'CPM', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
   { key: 'cr_qm', label: 'CR(q→m)', format: v => `${v}%`, kind: 'ratio', goodWhen: 'higher' },
   { key: 'deals', label: 'Сделки', format: v => String(v), kind: 'count', goodWhen: 'higher' },
-  { key: 'cac', label: 'CAC', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
+  { key: 'cac', label: 'CPO', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
   { key: 'cr_lo', label: 'CR(l→o)', format: v => `${v}%`, kind: 'ratio', goodWhen: 'higher' },
   { key: 'revenue', label: 'Revenue', format: formatMoney, kind: 'count', goodWhen: 'higher' },
   { key: 'aov', label: 'AOV', format: formatMoney, kind: 'rate', goodWhen: 'higher' },

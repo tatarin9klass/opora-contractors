@@ -35,6 +35,9 @@ export function cpqlClass(val) {
   return 'metric-danger'
 }
 
+// В интерфейсе эта метрика называется CPO (стоимость сделки) — раньше
+// называлась CAC. Внутренний ключ/колонки в БД остались `cac`, чтобы не
+// ломать уже накопленные снапшоты и импорт; переименование чисто визуальное.
 export function cacClass(val) {
   if (!val) return 'metric-empty'
   if (val <= 50000) return 'metric-ok'

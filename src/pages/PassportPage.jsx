@@ -688,7 +688,7 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
                     { label: 'CPM', val: pRates.cpm ? formatMoney(pRates.cpm) : '—' },
                     { label: 'CR(q→m)', val: pRates.cr_qm != null ? `${pRates.cr_qm}%` : '—' },
                     { label: 'Сделки', val: pAgg.deals },
-                    { label: 'CAC', val: pRates.cac ? formatMoney(pRates.cac) : '—' },
+                    { label: 'CPO', val: pRates.cac ? formatMoney(pRates.cac) : '—' },
                     { label: 'CR(l→o)', val: pRates.cr_lo != null ? `${pRates.cr_lo}%` : '—' },
                     { label: 'Revenue', val: formatMoney(pAgg.revenue) },
                     { label: 'AOV', val: pRates.aov ? formatMoney(pRates.aov) : '—' },
