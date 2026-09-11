@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase.js'
+import { supabase, fetchAllRows } from '../lib/supabase.js'
 import { getStatusClass, formatMoney, formatDate, ACTIVE_PAYMENT_TYPES } from '../lib/helpers.js'
 import { weekStart as getWeekStart, todayISO, addDaysISO, daysBetweenISO, weekStartOf } from '../lib/dateContext.js'
 import ChangeStatusModal from '../components/ChangeStatusModal.jsx'
@@ -177,20 +177,20 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
         from = pRangeFrom < MIN_RANGE_DATE ? MIN_RANGE_DATE : pRangeFrom
         to = pRangeTo < from ? from : pRangeTo
       }
-      const [{ data: facts }, { data: exp }] = await Promise.all([
-        supabase.from('daily_facts')
+      const [facts, exp] = await Promise.all([
+        fetchAllRows(() => supabase.from('daily_facts')
           .select('source_id, leads, quals, meetings, deals, revenue, duplicates')
           .eq('contractor_id', contractorId)
           .gte('fact_date', from)
-          .lte('fact_date', to),
-        supabase.from('weekly_expenses')
+          .lte('fact_date', to)),
+        fetchAllRows(() => supabase.from('weekly_expenses')
           .select('week_start, spend')
           .eq('contractor_id', contractorId)
           .gte('week_start', weekStartOf(from))
-          .lte('week_start', weekStartOf(to)),
+          .lte('week_start', weekStartOf(to))),
       ])
-      setPDailyFacts(facts || [])
-      setPExpenses(exp || [])
+      setPDailyFacts(facts)
+      setPExpenses(exp)
       setPFrom(from)
       setPTo(to)
       setPLoading(false)

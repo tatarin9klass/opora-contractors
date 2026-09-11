@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { supabase } from '../lib/supabase.js'
+import { supabase, fetchAllRows } from '../lib/supabase.js'
 import { formatMoney } from '../lib/helpers.js'
 import { weekStart as getWeekStart, addDaysISO, periodPaceRatio, weeklyPlanFromMonthly } from '../lib/dateContext.js'
 import SetTargetModal from '../components/SetTargetModal.jsx'
@@ -106,7 +106,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
 
   async function load() {
     setLoading(true)
-    const [statsRes, contractorsRes, targetsRes, historicalRes, allTargetsRes] = await Promise.all([
+    const [statsRows, contractorsRes, targetsRes, historicalRes, allTargetsRes] = await Promise.all([
       // ИСТОЧНИК ПРАВДЫ: weekly_stats (daily_facts + weekly_expenses), не weekly_facts.
       // ИСПРАВЛЕНО: раньше здесь был довесок "*, contractors(...)" (PostgREST
       // embedding) — после того как weekly_stats переписали через WITH/UNION
@@ -116,7 +116,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
       // оставались только исторические (из отдельной таблицы). Имя
       // подрядчика для снапшота заморозки теперь берётся из отдельно
       // загруженного contractor_mtd (см. contractorNameMap ниже), без embed.
-      supabase.from('weekly_stats').select('*'),
+      fetchAllRows(() => supabase.from('weekly_stats').select('*')),
       supabase.from('contractor_mtd').select('*'),
       supabase.from('contractor_targets').select('*'),
       // Историческая сводка по компании целиком (не по подрядчикам), присланная
@@ -146,7 +146,7 @@ export default function DashboardPage({ onOpenPassport, isAdmin }) {
     // Битрикса (актуально для недавних недель), его строки за эту неделю
     // отбрасываем целиком в пользу вручную введённой сводки.
     const historicalWeeks = new Set(historicalStats.map(h => h.week_start))
-    const liveStats = (statsRes.data || []).filter(r => !historicalWeeks.has(r.week_start))
+    const liveStats = statsRows.filter(r => !historicalWeeks.has(r.week_start))
     const stats = [...liveStats, ...historicalStats]
     setWeeklyStats(stats)
     setContractors(contractorsRes.data || [])

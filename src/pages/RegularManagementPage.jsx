@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase.js'
+import { supabase, fetchAllRows } from '../lib/supabase.js'
 import { formatMoney } from '../lib/helpers.js'
 import { periodPaceRatio, weeklyPlanFromMonthly } from '../lib/dateContext.js'
 
@@ -97,15 +97,15 @@ export default function RegularManagementPage() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const [{ data: stats }, { data: historical }, { data: targets }] = await Promise.all([
-        supabase.from('weekly_stats').select('week_start, leads, quals, meetings, deals, spend, revenue, duplicates'),
+      const [stats, { data: historical }, { data: targets }] = await Promise.all([
+        fetchAllRows(() => supabase.from('weekly_stats').select('week_start, leads, quals, meetings, deals, spend, revenue, duplicates')),
         supabase.from('dashboard_historical_weeks').select('*'),
         supabase.from('monthly_targets').select('*'),
       ])
 
       // Компания целиком — суммируем по всем подрядчикам, contractor_id не важен.
       const byWeek = {}
-      for (const r of stats || []) {
+      for (const r of stats) {
         if (!r.week_start) continue
         if (!byWeek[r.week_start]) byWeek[r.week_start] = { leads: 0, quals: 0, meetings: 0, deals: 0, spend: 0, revenue: 0, duplicates: 0 }
         const a = byWeek[r.week_start]

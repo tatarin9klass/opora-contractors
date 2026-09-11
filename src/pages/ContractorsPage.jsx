@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { supabase } from '../lib/supabase.js'
+import { supabase, fetchAllRows } from '../lib/supabase.js'
 import { getStatusClass, cplClass, cpqlClass, cacClass, dupRateClass, formatMoney } from '../lib/helpers.js'
 import { weekStart as getWeekStart, todayISO, periodPaceRatio, weekStartOf, addDaysISO, daysBetweenISO } from '../lib/dateContext.js'
 import AddContractorModal from '../components/AddContractorModal.jsx'
@@ -114,24 +114,24 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
   async function load() {
     setLoading(true)
     const currentMonth = monthKey()
-    const [{ data }, { data: targetRows }, { data: statsRows }, { data: dailyRows }, { data: mTarget }] = await Promise.all([
+    const [{ data }, { data: targetRows }, statsRows, dailyRows, { data: mTarget }] = await Promise.all([
       supabase.from('contractor_mtd').select('*'),
       supabase.from('contractor_targets').select('*'),
-      supabase.from('weekly_stats').select('*'),
+      fetchAllRows(() => supabase.from('weekly_stats').select('*')),
       // График "Лиды/Квалы/Встречи по дням" — всегда текущий календарный месяц,
       // независимо от переключателя Месяц/Неделя вверху страницы (план на день
       // считается только от текущего месяца).
-      supabase.from('daily_facts').select('fact_date, leads, quals, meetings').not('contractor_id', 'is', null).gte('fact_date', currentMonth).lte('fact_date', todayISO()),
+      fetchAllRows(() => supabase.from('daily_facts').select('fact_date, leads, quals, meetings').not('contractor_id', 'is', null).gte('fact_date', currentMonth).lte('fact_date', todayISO())),
       supabase.from('monthly_targets').select('*').eq('month', currentMonth).maybeSingle(),
     ])
     setRows(data || [])
-    setDailyFacts(dailyRows || [])
+    setDailyFacts(dailyRows)
     setMonthlyTarget(mTarget || null)
     const targetsMap = {}
     ;(targetRows || []).forEach(t => { targetsMap[t.contractor_id] = t })
     setTargets(targetsMap)
 
-    const stats = statsRows || []
+    const stats = statsRows
     setWeeklyStats(stats)
     const weeks = [...new Set(stats.map(w => w.week_start))].sort((a, b) => b.localeCompare(a))
     setAvailableWeeks(weeks)
@@ -165,19 +165,19 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     const to = rangeTo < from ? from : rangeTo
     async function loadRange() {
       setRangeLoading(true)
-      const [{ data: facts }, { data: exp }] = await Promise.all([
-        supabase.from('daily_facts')
+      const [facts, exp] = await Promise.all([
+        fetchAllRows(() => supabase.from('daily_facts')
           .select('contractor_id, fact_date, leads, quals, meetings, deals, revenue, duplicates')
           .not('contractor_id', 'is', null)
           .gte('fact_date', from)
-          .lte('fact_date', to),
-        supabase.from('weekly_expenses')
+          .lte('fact_date', to)),
+        fetchAllRows(() => supabase.from('weekly_expenses')
           .select('contractor_id, week_start, spend')
           .gte('week_start', weekStartOf(from))
-          .lte('week_start', weekStartOf(to)),
+          .lte('week_start', weekStartOf(to))),
       ])
-      setRangeDailyFacts(facts || [])
-      setRangeExpenses(exp || [])
+      setRangeDailyFacts(facts)
+      setRangeExpenses(exp)
       setRangeLoading(false)
     }
     loadRange()
