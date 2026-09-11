@@ -415,6 +415,7 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
     cac: pAgg.deals > 0 ? Math.round(pAgg.spend / pAgg.deals) : null,
     cr_lq: pAgg.leads > 0 ? Math.round((pAgg.quals / pAgg.leads) * 1000) / 10 : null,
     cr_qm: pAgg.quals > 0 ? Math.round((pAgg.meetings / pAgg.quals) * 1000) / 10 : null,
+    cr_mo: pAgg.meetings > 0 ? Math.round((pAgg.deals / pAgg.meetings) * 1000) / 10 : null,
     cr_lo: pAgg.leads > 0 ? Math.round((pAgg.deals / pAgg.leads) * 1000) / 10 : null,
     aov: pAgg.deals > 0 ? Math.round(pAgg.revenue / pAgg.deals) : null,
     dup_rate: pAgg.leads > 0 ? Math.round((pAgg.duplicates / pAgg.leads) * 1000) / 10 : null,
@@ -439,6 +440,7 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
     ...a,
     cr_lq: a.leads > 0 ? Math.round((a.quals / a.leads) * 1000) / 10 : null,
     cr_qm: a.quals > 0 ? Math.round((a.meetings / a.quals) * 1000) / 10 : null,
+    cr_mo: a.meetings > 0 ? Math.round((a.deals / a.meetings) * 1000) / 10 : null,
     cr_lo: a.leads > 0 ? Math.round((a.deals / a.leads) * 1000) / 10 : null,
   })).sort((a, b) => b.leads - a.leads)
 
@@ -689,6 +691,7 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
                     { label: 'CR(q→m)', val: pRates.cr_qm != null ? `${pRates.cr_qm}%` : '—' },
                     { label: 'Сделки', val: pAgg.deals },
                     { label: 'CPO', val: pRates.cac ? formatMoney(pRates.cac) : '—' },
+                    { label: 'CR(m→o)', val: pRates.cr_mo != null ? `${pRates.cr_mo}%` : '—' },
                     { label: 'CR(l→o)', val: pRates.cr_lo != null ? `${pRates.cr_lo}%` : '—' },
                     { label: 'Revenue', val: formatMoney(pAgg.revenue) },
                     { label: 'AOV', val: pRates.aov ? formatMoney(pRates.aov) : '—' },
@@ -719,12 +722,13 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
                               <th style={{ textAlign: 'right' }}>Встречи</th>
                               <th style={{ textAlign: 'right' }}>CR(q→m)</th>
                               <th style={{ textAlign: 'right' }}>Сделки</th>
+                              <th style={{ textAlign: 'right' }}>CR(m→o)</th>
                               <th style={{ textAlign: 'right' }}>CR(l→o)</th>
                             </tr>
                           </thead>
                           <tbody>
                             {pSourceRows.length === 0 ? (
-                              <tr><td colSpan={8} className="td-muted" style={{ textAlign: 'center', padding: 12 }}>Нет данных за период</td></tr>
+                              <tr><td colSpan={9} className="td-muted" style={{ textAlign: 'center', padding: 12 }}>Нет данных за период</td></tr>
                             ) : pSourceRows.map(row => (
                               <tr key={row.id}>
                                 <td>{row.name}</td>
@@ -734,6 +738,7 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
                                 <td style={{ textAlign: 'right' }}>{row.meetings}</td>
                                 <td style={{ textAlign: 'right' }} className="td-muted">{row.cr_qm != null ? `${row.cr_qm}%` : '—'}</td>
                                 <td style={{ textAlign: 'right' }}>{row.deals}</td>
+                                <td style={{ textAlign: 'right' }} className="td-muted">{row.cr_mo != null ? `${row.cr_mo}%` : '—'}</td>
                                 <td style={{ textAlign: 'right' }} className="td-muted">{row.cr_lo != null ? `${row.cr_lo}%` : '—'}</td>
                               </tr>
                             ))}

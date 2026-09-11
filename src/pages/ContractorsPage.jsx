@@ -262,6 +262,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
       cac: a.deals > 0 ? Math.round(a.spend / a.deals) : null,
       cr_lq: a.leads > 0 ? Math.round((a.quals / a.leads) * 1000) / 10 : null,
       cr_qm: a.quals > 0 ? Math.round((a.meetings / a.quals) * 1000) / 10 : null,
+      cr_mo: a.meetings > 0 ? Math.round((a.deals / a.meetings) * 1000) / 10 : null,
       cr_lo: a.leads > 0 ? Math.round((a.deals / a.leads) * 1000) / 10 : null,
       // Норма по дублям — фиксированные 12,5%, не завязана на план подрядчика.
       dup_rate: a.leads > 0 ? Math.round((a.duplicates / a.leads) * 1000) / 10 : null,
@@ -335,6 +336,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     { key: 'cr_qm', label: 'CR(q→m)', field: r => periodFact(r.contractor_id).cr_qm ?? -1 },
     { key: 'deals', label: 'Сделки', field: r => periodFact(r.contractor_id).deals },
     { key: 'cac', label: 'CPO', field: r => periodFact(r.contractor_id).cac ?? -1 },
+    { key: 'cr_mo', label: 'CR(m→o)', field: r => periodFact(r.contractor_id).cr_mo ?? -1 },
     { key: 'cr_lo', label: 'CR(l→o)', field: r => periodFact(r.contractor_id).cr_lo ?? -1 },
     { key: 'revenue', label: 'Revenue', field: r => periodFact(r.contractor_id).revenue },
   ]
@@ -367,9 +369,6 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
     }
   }
 
-  const activeCount = rows.filter(r => r.is_active).length
-  const testCount = rows.filter(r => r.status === 'Тест').length
-  const alertCount = rows.filter(r => r.is_active && hasDeviationAlert(periodFact(r.contractor_id), targets[r.contractor_id], mode, paceRatio)).length
 
   function SortIcon({ colKey }) {
     if (sortKey !== colKey) return <span style={{ opacity: 0.25, marginLeft: 4 }}>↕</span>
@@ -453,27 +452,6 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
         )}
       </div>
 
-      <div className="kpi-row">
-        <div className="kpi-card green">
-          <div className="kpi-label">Активных</div>
-          <div className="kpi-value">{activeCount}</div>
-          <div className="kpi-sub">из {rows.length} всего</div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-label">На тесте</div>
-          <div className="kpi-value">{testCount}</div>
-        </div>
-        <div className="kpi-card yellow">
-          <div className="kpi-label">Зоны внимания</div>
-          <div className="kpi-value">{alertCount}</div>
-          <div className="kpi-sub">отклонение &gt;20% от плана за период</div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-label">Всего подрядчиков</div>
-          <div className="kpi-value">{rows.length}</div>
-        </div>
-      </div>
-
       <div className="filters-bar">
         {STATUS_FILTERS.map(f => (
           <button key={f.value} className={`filter-chip ${statusFilter === f.value ? 'active' : ''}`} onClick={() => setStatusFilter(f.value)}>
@@ -539,6 +517,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                   <td style={{ textAlign: 'right' }}>{totalsFact.cr_qm != null ? `${totalsFact.cr_qm}%` : '—'}</td>
                   <td style={{ textAlign: 'right' }}>{totalsFact.deals}</td>
                   <td style={{ textAlign: 'right' }}>{totalsFact.cac ? formatMoney(totalsFact.cac) : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{totalsFact.cr_mo != null ? `${totalsFact.cr_mo}%` : '—'}</td>
                   <td style={{ textAlign: 'right' }}>{totalsFact.cr_lo != null ? `${totalsFact.cr_lo}%` : '—'}</td>
                   <td style={{ textAlign: 'right' }}>{totalsFact.revenue ? formatMoney(totalsFact.revenue) : '—'}</td>
                 </tr>
@@ -576,6 +555,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                       <td style={{ textAlign: 'right' }}>
                         <span className={`metric ${cacClass(fact.cac)}`}>{fact.cac ? formatMoney(fact.cac) : '—'}</span>
                       </td>
+                      <td style={{ textAlign: 'right' }} className="td-muted">{fact.cr_mo != null ? `${fact.cr_mo}%` : '—'}</td>
                       <td style={{ textAlign: 'right' }} className="td-muted">{fact.cr_lo != null ? `${fact.cr_lo}%` : '—'}</td>
                       <td style={{ textAlign: 'right' }}>{fact.revenue ? formatMoney(fact.revenue) : '—'}</td>
                     </tr>

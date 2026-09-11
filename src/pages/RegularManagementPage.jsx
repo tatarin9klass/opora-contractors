@@ -27,6 +27,7 @@ function deriveRates(a) {
     cac: a.deals > 0 ? Math.round(a.spend / a.deals) : null,
     cr_lq: a.leads > 0 ? Math.round((a.quals / a.leads) * 1000) / 10 : null,
     cr_qm: a.quals > 0 ? Math.round((a.meetings / a.quals) * 1000) / 10 : null,
+    cr_mo: a.meetings > 0 ? Math.round((a.deals / a.meetings) * 1000) / 10 : null,
     cr_lo: a.leads > 0 ? Math.round((a.deals / a.leads) * 1000) / 10 : null,
     aov: a.deals > 0 ? Math.round(a.revenue / a.deals) : null,
     // Дубли — null для недель без данных по дублям (историческая сводка),
@@ -51,6 +52,7 @@ const METRIC_GROUPS = [
   { key: 'cpm', label: 'CPM', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
   { key: 'cr_qm', label: 'CR(q→m)', format: v => `${v}%`, kind: 'ratio', goodWhen: 'higher' },
   { key: 'deals', label: 'Сделки', format: v => String(v), kind: 'count', goodWhen: 'higher' },
+  { key: 'cr_mo', label: 'CR(m→o)', format: v => `${v}%`, kind: 'ratio', goodWhen: 'higher' },
   { key: 'cac', label: 'CPO', format: formatMoney, kind: 'rate', goodWhen: 'lower' },
   { key: 'cr_lo', label: 'CR(l→o)', format: v => `${v}%`, kind: 'ratio', goodWhen: 'higher' },
   { key: 'revenue', label: 'Revenue', format: formatMoney, kind: 'count', goodWhen: 'higher' },
@@ -166,6 +168,7 @@ export default function RegularManagementPage() {
           cac: planRaw.deals > 0 ? Math.round(planRaw.spend / planRaw.deals) : null,
           cr_lq: planRaw.leads > 0 ? Math.round((planRaw.quals / planRaw.leads) * 1000) / 10 : null,
           cr_qm: planRaw.quals > 0 ? Math.round((planRaw.meetings / planRaw.quals) * 1000) / 10 : null,
+          cr_mo: planRaw.meetings > 0 ? Math.round((planRaw.deals / planRaw.meetings) * 1000) / 10 : null,
           cr_lo: planRaw.leads > 0 ? Math.round((planRaw.deals / planRaw.leads) * 1000) / 10 : null,
           aov: planRaw.deals > 0 ? Math.round(planRaw.revenue / planRaw.deals) : null,
         }

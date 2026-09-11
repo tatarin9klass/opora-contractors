@@ -172,6 +172,7 @@ export default function HelpPage() {
           <div>
             <Term name="CR(l→q)">Квалы / Лиды — конверсия из лида в квал.</Term>
             <Term name="CR(q→m)">Встречи / Квалы — конверсия из квала во встречу.</Term>
+            <Term name="CR(m→o)">Сделки / Встречи — конверсия из встречи в сделку.</Term>
             <Term name="CR(l→o)">Сделки / Лиды — сквозная конверсия из лида в сделку.</Term>
             <Term name="Revenue">Сумма, на которую заключены сделки за период.</Term>
           </div>
