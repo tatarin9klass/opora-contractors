@@ -484,7 +484,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
               <p>Измените фильтры или добавьте нового подрядчика</p>
             </div>
           ) : (
-            <table className="table-compact">
+            <table className="table-compact table-sticky-first">
               <thead>
                 <tr>
                   {SORTABLE_COLUMNS.slice(0, 1).map(col => (
@@ -501,7 +501,7 @@ export default function ContractorsPage({ onOpenPassport, isAdmin }) {
                 </tr>
               </thead>
               <tbody>
-                <tr style={{ background: 'var(--green-bg)', fontWeight: 600, borderBottom: '2px solid var(--green-primary)' }}>
+                <tr className="totals-row" style={{ background: 'var(--green-bg)', fontWeight: 600, borderBottom: '2px solid var(--green-primary)' }}>
                   <td>Итого / Среднее</td>
                   <td>—</td>
                   <td style={{ textAlign: 'right' }}>{formatMoney(totalsFact.spend)}</td>

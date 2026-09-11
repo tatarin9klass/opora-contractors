@@ -205,6 +205,23 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 .regmgmt-table tr.regmgmt-group-end td { border-bottom: 2px solid var(--border); }
 .table-compact tbody td { padding: 7px 8px; font-size: 12px; }
 
+/* Закреплённый первый столбец (название подрядчика) — не уезжает при
+   горизонтальном скролле широкой таблицы метрик. Фон обязателен: иначе
+   содержимое остальных колонок будет просвечивать под ним при прокрутке,
+   поэтому фон дублируется для hover и для строки "Итого / Среднее",
+   у которых он свой. */
+.table-sticky-first th:first-child,
+.table-sticky-first td:first-child {
+  position: sticky; left: 0; z-index: 1;
+  background: var(--white);
+  /* Граница именно тенью, а не border: при border-collapse: collapse
+     рамка у sticky-ячейки в части браузеров уезжает вместе со скроллом. */
+  box-shadow: inset -1px 0 0 var(--border);
+}
+.table-sticky-first thead th:first-child { z-index: 2; background: var(--bg); }
+.table-sticky-first tbody tr:hover td:first-child { background: var(--green-bg); }
+.table-sticky-first tbody tr.totals-row td:first-child { background: var(--green-bg); }
+
 /* Metric cells */
 .metric { font-weight: 600; }
 .metric-ok { color: var(--green-primary); }
