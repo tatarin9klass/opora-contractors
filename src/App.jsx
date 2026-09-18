@@ -8,6 +8,10 @@ import WeeklyExpensesPage from './pages/WeeklyExpensesPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import HelpPage from './pages/HelpPage.jsx'
 import RegularManagementPage from './pages/RegularManagementPage.jsx'
+import ChannelsPage from './pages/ChannelsPage.jsx'
+import ChannelPassportPage from './pages/ChannelPassportPage.jsx'
+import AvtpImportPage from './pages/AvtpImportPage.jsx'
+import ApExpensesPage from './pages/ApExpensesPage.jsx'
 import { AuthProvider, useAuth } from './lib/auth.jsx'
 
 const PAGE_TITLES = {
@@ -17,25 +21,35 @@ const PAGE_TITLES = {
   expenses: 'Ввод расходов',
   regmgmt: 'Регулярный менеджмент',
   help: 'Инструкция',
+  channels: 'Каналы — Автоправо',
+  apimport: 'Импорт данных — Автоправо',
+  apexpenses: 'Ввод расходов — Автоправо',
 }
 
-function ImportPlaceholder() {
-  return (
-    <div className="empty-state" style={{ marginTop: 60 }}>
-      <div className="empty-state-icon">📥</div>
-      <h3>Импорт данных из Битрикса</h3>
-      <p style={{ maxWidth: 400, margin: '8px auto 0' }}>
-        Здесь будет загрузка еженедельного Excel-файла с листами: Лиды, Квалы, Встречи, Сделки.<br /><br />
-        Раздел в разработке.
-      </p>
-    </div>
-  )
-}
+// Стартовый раздел каждого направления. Приложение всегда открывается на БФЛ.
+const HOME_PAGE = { bfl: 'dashboard', avtp: 'channels' }
+
+// Разделы, которые относятся к направлению АВТОПРАВО — нужны, чтобы при
+// переключении направления не остаться на чужом экране.
+const AVTP_PAGES = new Set(['channels', 'channel', 'apimport', 'apexpenses'])
+
+// Чисто write-инструменты: без информационной ценности для роли "просмотр",
+// скрываем их целиком из навигации, а не разрешаем открыть в disabled-виде.
+const ADMIN_ONLY_PAGES = new Set(['import', 'expenses', 'apimport', 'apexpenses'])
 
 function AppShell() {
   const { session, profile, isAdmin, loading, signOut } = useAuth()
+  const [direction, setDirectionState] = useState('bfl')
   const [page, setPage] = useState('dashboard')
   const [passportId, setPassportId] = useState(null)
+  const [channelId, setChannelId] = useState(null)
+
+  function setDirection(next) {
+    setDirectionState(next)
+    setPage(HOME_PAGE[next] || 'dashboard')
+    setPassportId(null)
+    setChannelId(null)
+  }
 
   function openPassport(id) {
     setPassportId(id)
@@ -45,6 +59,16 @@ function AppShell() {
   function backToList() {
     setPage('contractors')
     setPassportId(null)
+  }
+
+  function openChannel(id) {
+    setChannelId(id)
+    setPage('channel')
+  }
+
+  function backToChannels() {
+    setPage('channels')
+    setChannelId(null)
   }
 
   if (loading) return <div className="loading">Загрузка...</div>
@@ -61,15 +85,25 @@ function AppShell() {
     )
   }
 
-  // Раздел "Ввод расходов"/"Импорт данных" — write-инструменты без
-  // информационной ценности для роли "просмотр", скрываем их целиком из
-  // навигации, а не разрешаем открыть в disabled-виде.
-  const safePage = !isAdmin && (page === 'import' || page === 'expenses') ? 'dashboard' : page
-  const title = safePage === 'passport' ? 'Паспорт подрядчика' : PAGE_TITLES[safePage] || ''
+  const safePage = !isAdmin && ADMIN_ONLY_PAGES.has(page) ? (HOME_PAGE[direction] || 'dashboard') : page
+  // Направление считаем по самому разделу, а не по стейту — так подсветка меню
+  // и заголовок не разъедутся, если раздел и направление на миг разошлись.
+  const safeDirection = AVTP_PAGES.has(safePage) ? 'avtp' : 'bfl'
+  const title = safePage === 'passport'
+    ? 'Паспорт подрядчика'
+    : safePage === 'channel'
+      ? 'Паспорт канала'
+      : PAGE_TITLES[safePage] || ''
 
   return (
     <div className="layout">
-      <Sidebar page={safePage} setPage={p => { setPage(p); setPassportId(null) }} isAdmin={isAdmin} />
+      <Sidebar
+        page={safePage}
+        setPage={p => { setPage(p); setPassportId(null); setChannelId(null) }}
+        isAdmin={isAdmin}
+        direction={safeDirection}
+        setDirection={setDirection}
+      />
       <div className="main">
         <div className="topbar">
           <div className="topbar-title">{title}</div>
@@ -87,6 +121,10 @@ function AppShell() {
           {safePage === 'expenses' && <WeeklyExpensesPage />}
           {safePage === 'regmgmt' && <RegularManagementPage />}
           {safePage === 'help' && <HelpPage />}
+          {safePage === 'channels' && <ChannelsPage onOpenChannel={openChannel} />}
+          {safePage === 'channel' && channelId && <ChannelPassportPage channelId={channelId} onBack={backToChannels} isAdmin={isAdmin} />}
+          {safePage === 'apimport' && <AvtpImportPage />}
+          {safePage === 'apexpenses' && <ApExpensesPage />}
         </div>
       </div>
     </div>

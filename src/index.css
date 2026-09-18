@@ -55,6 +55,24 @@ input, select, textarea { font-family: inherit; }
 }
 .sidebar-logo h1 { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
 .sidebar-logo p { font-size: 11px; color: rgba(255,255,255,0.45); margin-top: 2px; }
+/* Переключатель направления (БФЛ / АВТОПРАВО) — живёт в тёмной шапке
+   сайдбара, поэтому обычный белый .form-select здесь не годится. */
+.direction-select {
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  appearance: none;
+}
+.direction-select:hover { background: rgba(255,255,255,0.14); }
+.direction-select option { color: var(--text-primary); background: var(--white); }
+
 .sidebar-nav { flex: 1; padding: 12px 0; }
 .nav-item {
   display: flex; align-items: center; gap: 10px;
