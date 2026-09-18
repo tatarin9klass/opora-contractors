@@ -32,10 +32,6 @@ const CATEGORY_AVRKM = 36;  // "Аварийные комиссары"
 // Раньше этой даты данные направления не грузим.
 const MIN_DATE = "2026-01-01";
 
-// Канал, к которому автоматически привязывается любой источник avrkm —
-// в этом направлении он ровно один, перечислять источники поимённо незачем.
-const AVRKM_CHANNEL_NAME = "3.0 АВАРКОМ";
-
 // Бюджет времени на один вызов. Ниже реального лимита Edge Function, чтобы
 // успеть корректно сохранить курсор и вернуть ответ, а не оборваться на
 // середине страницы.
@@ -134,9 +130,6 @@ Deno.serve(async (req) => {
       }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const { data: avrkmChannel } = await supabase
-      .from("ap_channels").select("id").eq("name", AVRKM_CHANNEL_NAME).maybeSingle();
-
     const { data: knownSources } = await supabase.from("ap_sources").select("bitrix_name");
     const knownNames = new Set((knownSources || []).map((s: any) => s.bitrix_name));
 
@@ -145,9 +138,10 @@ Deno.serve(async (req) => {
       .map((s) => ({
         bitrix_name: s.name,
         direction: s.direction,
-        // avrkm — один канал на всё направление, привязываем сразу.
-        // avtpr — оставляем без канала: привязка руками на странице импорта.
-        channel_id: s.direction === "avrkm" ? (avrkmChannel?.id ?? null) : null,
+        // Новый источник всегда заводится без канала — и в Автоправе, и в
+        // Аваркоме: в обоих направлениях групп каналов по несколько, угадать
+        // за пользователя нельзя. Непривязанные видны на странице импорта.
+        channel_id: null,
       }));
     if (newSources.length) {
       await upsertChunked(supabase, "ap_sources", newSources, "bitrix_name");

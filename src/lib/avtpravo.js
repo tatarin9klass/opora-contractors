@@ -81,7 +81,11 @@ export function cpo(spend, contracts) {
 export function aggregateChannels({ channels, sources, stats, expenses }, months) {
   const period = new Set(months)
   const sourceToChannel = new Map()
-  for (const s of sources) sourceToChannel.set(s.bitrix_name, s.channel_id)
+  const sourceToDirection = new Map()
+  for (const s of sources) {
+    sourceToChannel.set(s.bitrix_name, s.channel_id)
+    sourceToDirection.set(s.bitrix_name, s.direction)
+  }
 
   const spendByChannel = new Map()
   for (const e of expenses) {
@@ -98,7 +102,10 @@ export function aggregateChannels({ channels, sources, stats, expenses }, months
   for (const row of stats) {
     if (!period.has(row.month)) continue
     const channelId = sourceToChannel.get(row.source_name) ?? null
-    const b = bucket(channelId)
+    // Непривязанный источник копится отдельно по своему направлению, чтобы
+    // строка «Без канала» встала в нужную группу, а не всегда в Автоправо.
+    const key = channelId ?? `orphan:${sourceToDirection.get(row.source_name) || 'avtpr'}`
+    const b = bucket(key)
     b.leads += row.leads || 0
     b.contracts += row.contracts || 0
   }
@@ -118,12 +125,13 @@ export function aggregateChannels({ channels, sources, stats, expenses }, months
     }
   })
 
-  const orphan = acc.get(null)
-  if (orphan && (orphan.leads > 0 || orphan.contracts > 0)) {
+  for (const dir of ['avtpr', 'avrkm']) {
+    const orphan = acc.get(`orphan:${dir}`)
+    if (!orphan || (orphan.leads === 0 && orphan.contracts === 0)) continue
     out.push({
       channelId: null,
       name: 'Без канала',
-      direction: 'avtpr',
+      direction: dir,
       sort_order: 9999,
       spend: 0,
       leads: orphan.leads,

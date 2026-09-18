@@ -119,8 +119,8 @@ export default function AvtpImportPage() {
       <div className="info-card" style={{ maxWidth: 760 }}>
         <div className="info-card-title">Источники без канала</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-          Источники avtpr, которых нет в разбивке по группам каналов. Их лиды и договоры считаются,
-          но лежат в строке «Без канала», пока источник не привязан.
+          Источники, которые ещё не разложены по группам каналов. Их лиды и договоры считаются,
+          но лежат в строке «Без канала» своего направления, пока источник не привязан.
         </div>
         {unmapped.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: 13 }}>✅ Все источники привязаны</div>
@@ -129,9 +129,16 @@ export default function AvtpImportPage() {
             {unmapped.map(u => (
               <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
                 <code style={{ fontSize: 12, flex: 1 }}>{u.bitrix_name}</code>
+                {/* Каналы разбиты по направлениям — иначе источник аваркома
+                    легко уехать в канал автоправа, и обратно это не видно. */}
                 <select className="form-select" style={{ maxWidth: 220 }} defaultValue="" onChange={e => assignChannel(u.id, e.target.value)}>
                   <option value="" disabled>Привязать к каналу...</option>
-                  {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  <optgroup label="АВТОПРАВО">
+                    {channels.filter(c => c.direction === 'avtpr').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </optgroup>
+                  <optgroup label="АВАРКОМ">
+                    {channels.filter(c => c.direction === 'avrkm').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </optgroup>
                 </select>
               </div>
             ))}
