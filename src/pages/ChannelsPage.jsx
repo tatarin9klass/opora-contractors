@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { formatMoney, formatNum } from '../lib/helpers.js'
-import { loadAvtpData, availableMonths, aggregateChannels, monthKeyOf, monthLabel, cpo } from '../lib/avtpravo.js'
+import { loadAvtpData, availableMonths, aggregateChannels, monthKeyOf, monthLabel, monthsBetween, monthsLabel, cpo } from '../lib/avtpravo.js'
 
 const GROUPS = [
   { id: 'avtpr', label: 'АВТОПРАВО' },
@@ -24,7 +24,10 @@ function sumRows(rows) {
 
 export default function ChannelsPage({ onOpenChannel }) {
   const [data, setData] = useState(null)
-  const [month, setMonth] = useState(monthKeyOf())
+  // Период — диапазон месяцев. По умолчанию оба конца на текущем месяце,
+  // то есть ровно прежнее поведение «один месяц».
+  const [fromMonth, setFromMonth] = useState(monthKeyOf())
+  const [toMonth, setToMonth] = useState(monthKeyOf())
   const [loading, setLoading] = useState(true)
   const [sortKey, setSortKey] = useState(null)
   const [sortDir, setSortDir] = useState('desc')
@@ -35,7 +38,10 @@ export default function ChannelsPage({ onOpenChannel }) {
       // Текущий месяц обычно ещё не набрал данных в начале месяца — но если
       // его вообще нет в списке (импорт не доходил), встаём на самый свежий.
       const months = availableMonths(d)
-      if (months.length && !months.includes(monthKeyOf())) setMonth(months[0])
+      if (months.length && !months.includes(monthKeyOf())) {
+        setFromMonth(months[0])
+        setToMonth(months[0])
+      }
       setLoading(false)
     })
   }, [])
@@ -47,7 +53,11 @@ export default function ChannelsPage({ onOpenChannel }) {
     return list.includes(cur) ? list : [cur, ...list]
   }, [data])
 
-  const rows = useMemo(() => (data ? aggregateChannels(data, month) : []), [data, month])
+  // Диапазон считаем сами, а не пересечением со списком доступных: месяц без
+  // данных внутри диапазона просто ничего не добавит, но и не оборвёт период.
+  const period = useMemo(() => monthsBetween(fromMonth, toMonth), [fromMonth, toMonth])
+
+  const rows = useMemo(() => (data ? aggregateChannels(data, period) : []), [data, period])
 
   function toggleSort(key) {
     if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
@@ -80,10 +90,32 @@ export default function ChannelsPage({ onOpenChannel }) {
           <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
             Период
           </div>
-          <div style={{ fontSize: 16, fontWeight: 600 }}>{monthLabel(month)}</div>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>{monthsLabel(period)}</div>
         </div>
-        <div style={{ width: 320 }}>
-          <select className="form-select" style={{ width: '100%' }} value={month} onChange={e => setMonth(e.target.value)}>
+        {/* Фиксированная ширина блока — чтобы смена месяцев не дёргала layout. */}
+        <div style={{ width: 400, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <select
+            className="form-select" style={{ flex: 1, minWidth: 0 }}
+            value={fromMonth}
+            onChange={e => {
+              const v = e.target.value
+              setFromMonth(v)
+              // Не даём диапазону вывернуться наизнанку.
+              if (v > toMonth) setToMonth(v)
+            }}
+          >
+            {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+          <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>—</span>
+          <select
+            className="form-select" style={{ flex: 1, minWidth: 0 }}
+            value={toMonth}
+            onChange={e => {
+              const v = e.target.value
+              setToMonth(v)
+              if (v < fromMonth) setFromMonth(v)
+            }}
+          >
             {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
           </select>
         </div>

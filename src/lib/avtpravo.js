@@ -21,6 +21,30 @@ export function monthLabel(m) {
   return new Date(m).toLocaleString('ru-RU', { month: 'long', year: 'numeric' })
 }
 
+// Все месяцы от from до to включительно. Целочисленная арифметика по
+// годам/месяцам, а не Date.setMonth: строка "2026-01-01" парсится как
+// UTC-полночь, а getMonth/setMonth работают в локальной зоне — на этом стыке
+// месяц уезжает на единицу.
+export function monthsBetween(from, to) {
+  let [fy, fm] = from.split('-').map(Number)
+  let [ty, tm] = to.split('-').map(Number)
+  if (fy > ty || (fy === ty && fm > tm)) {
+    ;[fy, fm, ty, tm] = [ty, tm, fy, fm]
+  }
+  const out = []
+  for (let y = fy, m = fm; y < ty || (y === ty && m <= tm); m++) {
+    if (m > 12) { m = 1; y++ }
+    out.push(`${y}-${String(m).padStart(2, '0')}-01`)
+  }
+  return out
+}
+
+export function monthsLabel(months) {
+  if (!months || months.length === 0) return '—'
+  if (months.length === 1) return monthLabel(months[0])
+  return `${monthLabel(months[0])} — ${monthLabel(months[months.length - 1])}`
+}
+
 export async function loadAvtpData() {
   const [{ data: channels }, { data: sources }, stats, { data: expenses }] = await Promise.all([
     supabase.from('ap_channels').select('*').order('sort_order'),
@@ -50,16 +74,18 @@ export function cpo(spend, contracts) {
   return spend / contracts
 }
 
-// Сводка по каналам за месяц. Источник, не привязанный ни к одному каналу,
-// не теряется — он попадает в псевдоканал с channelId = null, и его видно
-// на экране отдельной строкой «Без канала».
-export function aggregateChannels({ channels, sources, stats, expenses }, month) {
+// Сводка по каналам за выбранные месяцы (months — массив, один месяц это
+// просто массив из одного элемента). Источник, не привязанный ни к одному
+// каналу, не теряется — он попадает в псевдоканал с channelId = null, и его
+// видно на экране отдельной строкой «Без канала».
+export function aggregateChannels({ channels, sources, stats, expenses }, months) {
+  const period = new Set(months)
   const sourceToChannel = new Map()
   for (const s of sources) sourceToChannel.set(s.bitrix_name, s.channel_id)
 
   const spendByChannel = new Map()
   for (const e of expenses) {
-    if (e.month !== month) continue
+    if (!period.has(e.month)) continue
     spendByChannel.set(e.channel_id, (spendByChannel.get(e.channel_id) || 0) + Number(e.spend || 0))
   }
 
@@ -70,7 +96,7 @@ export function aggregateChannels({ channels, sources, stats, expenses }, month)
   }
 
   for (const row of stats) {
-    if (row.month !== month) continue
+    if (!period.has(row.month)) continue
     const channelId = sourceToChannel.get(row.source_name) ?? null
     const b = bucket(channelId)
     b.leads += row.leads || 0
@@ -109,15 +135,19 @@ export function aggregateChannels({ channels, sources, stats, expenses }, month)
   return out
 }
 
-// Разрез по источникам внутри одного канала за месяц. Цены здесь не
-// показываются: расход вводится на канал целиком, делить его между
+// Разрез по источникам внутри одного канала за выбранные месяцы. Цены здесь
+// не показываются: расход вводится на канал целиком, делить его между
 // источниками нечем и незачем.
-export function aggregateSources({ sources, stats }, channelId, month) {
+export function aggregateSources({ sources, stats }, channelId, months) {
+  const period = new Set(months)
   const own = sources.filter(s => s.channel_id === channelId)
   const byName = new Map()
   for (const row of stats) {
-    if (row.month !== month) continue
-    byName.set(row.source_name, { leads: row.leads || 0, contracts: row.contracts || 0 })
+    if (!period.has(row.month)) continue
+    const acc = byName.get(row.source_name) || { leads: 0, contracts: 0 }
+    acc.leads += row.leads || 0
+    acc.contracts += row.contracts || 0
+    byName.set(row.source_name, acc)
   }
   return own.map(s => ({
     id: s.id,

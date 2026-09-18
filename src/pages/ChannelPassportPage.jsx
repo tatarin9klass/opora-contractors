@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { formatMoney, formatNum, formatDate } from '../lib/helpers.js'
-import { loadAvtpData, availableMonths, aggregateChannels, aggregateSources, monthKeyOf, monthLabel } from '../lib/avtpravo.js'
+import { loadAvtpData, availableMonths, aggregateChannels, aggregateSources, monthKeyOf, monthLabel, monthsBetween, monthsLabel } from '../lib/avtpravo.js'
 
 const TABS = ['Источники', 'Файлы']
 
 export default function ChannelPassportPage({ channelId, onBack, isAdmin }) {
   const [data, setData] = useState(null)
   const [files, setFiles] = useState([])
-  const [month, setMonth] = useState(monthKeyOf())
+  const [fromMonth, setFromMonth] = useState(monthKeyOf())
+  const [toMonth, setToMonth] = useState(monthKeyOf())
   const [tab, setTab] = useState('Источники')
   const [loading, setLoading] = useState(true)
 
@@ -28,7 +29,10 @@ export default function ChannelPassportPage({ channelId, onBack, isAdmin }) {
     Promise.all([loadAvtpData(), loadFiles()]).then(([d]) => {
       setData(d)
       const months = availableMonths(d)
-      if (months.length && !months.includes(monthKeyOf())) setMonth(months[0])
+      if (months.length && !months.includes(monthKeyOf())) {
+        setFromMonth(months[0])
+        setToMonth(months[0])
+      }
       setLoading(false)
     })
   }, [channelId])
@@ -40,12 +44,14 @@ export default function ChannelPassportPage({ channelId, onBack, isAdmin }) {
     return list.includes(cur) ? list : [cur, ...list]
   }, [data])
 
+  const period = useMemo(() => monthsBetween(fromMonth, toMonth), [fromMonth, toMonth])
+
   const channel = data?.channels.find(c => c.id === channelId) || null
   const summary = useMemo(() => {
     if (!data) return null
-    return aggregateChannels(data, month).find(r => r.channelId === channelId) || null
-  }, [data, month, channelId])
-  const sourceRows = useMemo(() => (data ? aggregateSources(data, channelId, month) : []), [data, channelId, month])
+    return aggregateChannels(data, period).find(r => r.channelId === channelId) || null
+  }, [data, period, channelId])
+  const sourceRows = useMemo(() => (data ? aggregateSources(data, channelId, period) : []), [data, channelId, period])
 
   // Ключ объекта в Storage должен быть ASCII-safe (кириллица и пробелы дают
   // "Invalid key") — как и для файлов подрядчиков БФЛ. Оригинальное имя файла
@@ -99,15 +105,35 @@ export default function ChannelPassportPage({ channelId, onBack, isAdmin }) {
             <span className="td-muted" style={{ fontSize: 12 }}>источников: {sourceRows.length}</span>
           </div>
         </div>
-        <div style={{ width: 260 }}>
-          <select className="form-select" style={{ width: '100%' }} value={month} onChange={e => setMonth(e.target.value)}>
+        <div style={{ width: 400, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <select
+            className="form-select" style={{ flex: 1, minWidth: 0 }}
+            value={fromMonth}
+            onChange={e => {
+              const v = e.target.value
+              setFromMonth(v)
+              if (v > toMonth) setToMonth(v)
+            }}
+          >
+            {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+          <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>—</span>
+          <select
+            className="form-select" style={{ flex: 1, minWidth: 0 }}
+            value={toMonth}
+            onChange={e => {
+              const v = e.target.value
+              setToMonth(v)
+              if (v < fromMonth) setFromMonth(v)
+            }}
+          >
             {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
           </select>
         </div>
       </div>
 
       <div className="info-card">
-        <div className="info-card-title">Показатели канала — {monthLabel(month)}</div>
+        <div className="info-card-title">Показатели канала — {monthsLabel(period)}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
           {tiles.map(item => (
             <div key={item.label} style={{ background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '10px 12px' }}>
@@ -126,7 +152,7 @@ export default function ChannelPassportPage({ channelId, onBack, isAdmin }) {
 
       {tab === 'Источники' && (
         <div className="info-card">
-          <div className="info-card-title">Источники канала — {monthLabel(month)}</div>
+          <div className="info-card-title">Источники канала — {monthsLabel(period)}</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
             Расход вводится на канал целиком, поэтому по источникам показаны только количественные показатели.
           </div>
