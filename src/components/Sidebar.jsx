@@ -15,6 +15,7 @@ const NAV = {
     { id: 'dashboard', icon: '📊', label: 'Дашборд' },
     { id: 'contractors', icon: '🤝', label: 'Подрядчики' },
     { id: 'regmgmt', icon: '📅', label: 'РМ' },
+    { id: 'deps', icon: '⏱', label: 'Зависимости' },
     // Чисто write-инструменты — не нужны роли "просмотр", у которой всё
     // равно нет прав ничего туда записать.
     ...(isAdmin ? [

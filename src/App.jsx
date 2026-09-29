@@ -8,6 +8,7 @@ import WeeklyExpensesPage from './pages/WeeklyExpensesPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import HelpPage from './pages/HelpPage.jsx'
 import RegularManagementPage from './pages/RegularManagementPage.jsx'
+import DependenciesPage from './pages/DependenciesPage.jsx'
 import ChannelsPage from './pages/ChannelsPage.jsx'
 import ChannelPassportPage from './pages/ChannelPassportPage.jsx'
 import AvtpImportPage from './pages/AvtpImportPage.jsx'
@@ -20,6 +21,7 @@ const PAGE_TITLES = {
   import: 'Импорт данных',
   expenses: 'Ввод расходов',
   regmgmt: 'Регулярный менеджмент',
+  deps: 'Зависимости',
   help: 'Инструкция',
   channels: 'Каналы — Автоправо',
   apimport: 'Импорт данных — Автоправо',
@@ -120,6 +122,7 @@ function AppShell() {
           {safePage === 'import' && <ImportPage />}
           {safePage === 'expenses' && <WeeklyExpensesPage />}
           {safePage === 'regmgmt' && <RegularManagementPage />}
+          {safePage === 'deps' && <DependenciesPage isAdmin={isAdmin} />}
           {safePage === 'help' && <HelpPage />}
           {safePage === 'channels' && <ChannelsPage onOpenChannel={openChannel} />}
           {safePage === 'channel' && channelId && <ChannelPassportPage channelId={channelId} onBack={backToChannels} isAdmin={isAdmin} />}
