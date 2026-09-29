@@ -37,6 +37,20 @@ const FIELD_MEETING_DATETIME = "ufCrm28Datetime";
 // Забираем как есть, классифицировать будем по факту увиденного.
 const FIELD_MEETING_STATUS = "ufCrm28_1742814152";
 
+// Люди и отдел. По источнику задачу не поставишь, а по фамилии — можно.
+const FIELD_SCHEDULED_BY = "ufCrm28_1743059683"; // кто назначил встречу
+const FIELD_CONSULTED_BY = "ufCrm28_1743059728"; // кто проводил консультацию
+const FIELD_MKO_DEPARTMENT = "ufCrm28_1743059876"; // отдел МКО (список)
+
+// Значения списка «Отдел МКО» — из crm.item.fields, entityTypeId 1044.
+const MKO_DEPARTMENTS: Record<string, string> = {
+  "3324": "МКО 1",
+  "3326": "МКО 2",
+  "3328": "МКО 3",
+  "4806": "ОАС",
+  "4848": "Прочие",
+};
+
 // Показываем с 16 июля — с этого дня данные заводятся системно. Но лиды
 // тянем с запасом назад: лид, созданный в мае и отквалившийся в августе,
 // обязан попасть в замер за августовскую неделю, иначе среднее занижается
@@ -92,6 +106,25 @@ async function buildLeadStatusMap(): Promise<Map<string, string>> {
       start,
     });
     for (const s of json.result || []) map.set(String(s.STATUS_ID), s.NAME);
+    if (!json.next) break;
+    start = json.next;
+  }
+  return map;
+}
+
+// Сотрудники: ID -> «Фамилия Имя». Без этого в отчётах вместо людей стояли бы
+// числовые идентификаторы, по которым никому ничего не понятно.
+async function buildUserMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  let start = 0;
+  while (true) {
+    const json = await bitrixCall("user.get", { start });
+    const page: any[] = json.result || [];
+    if (page.length === 0) break;
+    for (const u of page) {
+      const name = [u.LAST_NAME, u.NAME].filter(Boolean).join(" ").trim();
+      map.set(String(u.ID), name || `id ${u.ID}`);
+    }
     if (!json.next) break;
     start = json.next;
   }
@@ -218,9 +251,15 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const [sourceMap, leadStatusMap] = await Promise.all([
+    const [sourceMap, leadStatusMap, userMap] = await Promise.all([
       buildSourceMap(),
       buildLeadStatusMap(),
+      buildUserMap().catch((e) => {
+        // Права на user.get есть не у всякого вебхука. Без имён отчёт по
+        // менеджерам будет пустым, но импорт из-за этого валить незачем.
+        console.error("user.get failed:", String(e));
+        return new Map<string, string>();
+      }),
     ]);
     if (sourceMap.size === 0) {
       return new Response(JSON.stringify({
@@ -268,7 +307,7 @@ Deno.serve(async (req) => {
     while (phase === "leads" && timeLeft() > 8000) {
       const json = await bitrixCall("crm.lead.list", {
         filter: { SOURCE_ID: sourceIds, ">ID": leadsLastId },
-        select: ["ID", "SOURCE_ID", "DATE_CREATE", "STATUS_ID", FIELD_QUALIFIED_DATE],
+        select: ["ID", "SOURCE_ID", "DATE_CREATE", "STATUS_ID", "ASSIGNED_BY_ID", FIELD_QUALIFIED_DATE],
         order: { ID: "ASC" },
         start: 0,
       });
@@ -293,6 +332,8 @@ Deno.serve(async (req) => {
           qualified_at: toIso(lead[FIELD_QUALIFIED_DATE]),
           status_id: lead.STATUS_ID ? String(lead.STATUS_ID) : null,
           status_name: leadStatusMap.get(String(lead.STATUS_ID || "")) ?? null,
+          assigned_by_id: lead.ASSIGNED_BY_ID ? Number(lead.ASSIGNED_BY_ID) : null,
+          assigned_by_name: userMap.get(String(lead.ASSIGNED_BY_ID || "")) ?? null,
           synced_at: new Date().toISOString(),
         });
       }
@@ -356,6 +397,11 @@ Deno.serve(async (req) => {
           moved_time: toIso(m.movedTime),
           stage_id: String(m.stageId || ""),
           status_text: m[FIELD_MEETING_STATUS] ?? null,
+          assigned_by_id: m.assignedById ? Number(m.assignedById) : null,
+          assigned_by_name: userMap.get(String(m.assignedById || "")) ?? null,
+          scheduled_by_name: userMap.get(String(m[FIELD_SCHEDULED_BY] || "")) ?? null,
+          consulted_by_name: userMap.get(String(m[FIELD_CONSULTED_BY] || "")) ?? null,
+          mko_department: MKO_DEPARTMENTS[String(m[FIELD_MKO_DEPARTMENT] || "")] ?? null,
           synced_at: new Date().toISOString(),
         });
       }
