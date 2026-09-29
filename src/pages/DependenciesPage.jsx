@@ -47,6 +47,7 @@ export default function DependenciesPage({ isAdmin }) {
   const [rows, setRows] = useState([])
   const [coverage, setCoverage] = useState([])
   const [outcome, setOutcome] = useState([])
+  const [retry, setRetry] = useState([])
   const [loading, setLoading] = useState(true)
   const [unit, setUnit] = useState('hours')
   const [running, setRunning] = useState(false)
@@ -57,17 +58,20 @@ export default function DependenciesPage({ isAdmin }) {
   async function load() {
     setLoading(true)
     try {
-      const [data, cov, out] = await Promise.all([
+      const [data, cov, out, ret] = await Promise.all([
         fetchAllRows(() =>
           supabase.from('bfl_timing_weekly').select('*').gte('week_start', MIN_WEEK).order('week_start')),
         fetchAllRows(() =>
           supabase.from('bfl_timing_coverage').select('*').gte('week_start', MIN_WEEK).order('week_start')),
         fetchAllRows(() =>
           supabase.from('bfl_meeting_outcome_weekly').select('*').gte('week_start', MIN_WEEK).order('week_start')),
+        fetchAllRows(() =>
+          supabase.from('bfl_meeting_retry_weekly').select('*').gte('week_start', MIN_WEEK).order('week_start')),
       ])
       setRows(data)
       setCoverage(cov)
       setOutcome(out)
+      setRetry(ret)
     } catch (e) {
       setError(String(e))
     }
@@ -171,6 +175,18 @@ export default function DependenciesPage({ isAdmin }) {
     failed: a.failed + (o.failed || 0),
     pending: a.pending + (o.pending || 0),
   }), { held: 0, failed: 0, pending: 0 }), [outcome])
+
+  // Работа с сорвавшимися встречами: какую долю перезаписали и какая доля
+  // перезаписанных в итоге дошла.
+  const retryData = useMemo(() => retry.map(r => ({
+    week: r.week_start,
+    xLabel: weekLabel(r.week_start),
+    retryRate: r.retry_rate == null ? null : Number(r.retry_rate),
+    retrySuccess: r.retry_success_rate == null ? null : Number(r.retry_success_rate),
+    failed: r.failed,
+    retried: r.retried,
+    retriedHeld: r.retried_held,
+  })), [retry])
 
   // Если первый график данные дал, а второй пуст — значит встречи не удалось
   // связать с лидами. Это единственная неочевидная поломка в этой вкладке,
@@ -394,6 +410,65 @@ export default function DependenciesPage({ isAdmin }) {
             На каждое назначение в Битриксе заводится отдельная запись, поэтому считаются попытки:
             один лид, которому встречу переназначали трижды, даёт три попытки и максимум одну состоявшуюся.
             «В работе» — встречи с датой в будущем, в знаменатель они не идут.
+          </div>
+        </div>
+      )}
+
+      {retryData.length > 0 && (
+        <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 16 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>5. Работа с сорвавшимися встречами</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+            Из встреч, сорвавшихся на этой неделе, какой доле назначили новую — и какая доля тех в итоге состоялась.
+            Неделя — по времени сорвавшейся встречи.
+          </div>
+
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={retryData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#dce8d8" />
+              <XAxis dataKey="xLabel" tick={{ fontSize: 11, fill: '#8a9590' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#8a9590' }} width={45} domain={[0, 100]} unit="%" />
+              <Tooltip
+                formatter={(v, name) => [v == null ? '—' : `${v}%`, name]}
+                labelFormatter={(label, payload) => {
+                  const d = payload?.[0]?.payload
+                  if (!d) return label
+                  return `${label} · сорвалось ${d.failed}, перезаписали ${d.retried}, дошли ${d.retriedHeld}`
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="retryRate" name="Перезаписали, %" stroke="#3A7E34" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              <Line type="monotone" dataKey="retrySuccess" name="Из них дошли, %" stroke="#c9a227" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+
+          <div style={{ overflowX: 'auto', marginTop: 10 }}>
+            <table className="table-compact">
+              <thead>
+                <tr>
+                  <th>Неделя</th>
+                  {retryData.map(d => <th key={d.week} style={{ textAlign: 'right' }}>{d.xLabel}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="td-muted">Сорвалось</td>
+                  {retryData.map(d => <td key={d.week} style={{ textAlign: 'right' }} className="td-muted">{d.failed}</td>)}
+                </tr>
+                <tr>
+                  <td>Перезаписали</td>
+                  {retryData.map(d => <td key={d.week} style={{ textAlign: 'right' }}>{d.retried}</td>)}
+                </tr>
+                <tr>
+                  <td className="td-muted">Из них дошли</td>
+                  {retryData.map(d => <td key={d.week} style={{ textAlign: 'right' }} className="td-muted">{d.retriedHeld}</td>)}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+            Последние одна-две недели всегда занижены: перезаписать сорвавшуюся встречу ещё просто не успели.
+            Смотреть тренд имеет смысл по неделям постарше.
           </div>
         </div>
       )}

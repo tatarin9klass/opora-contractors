@@ -79,6 +79,25 @@ function toIso(raw: unknown): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+// Названия стадий воронки лидов: STATUS_ID -> NAME. Нужны, чтобы в отчётах
+// было видно «Назначение встречи», а не код вида UC_XXXX, и чтобы не держать
+// список стадий отдельным справочником, который разъедется с Битриксом.
+async function buildLeadStatusMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  let start = 0;
+  while (true) {
+    const json = await bitrixCall("crm.status.list", {
+      filter: { ENTITY_ID: "STATUS" },
+      select: ["STATUS_ID", "NAME"],
+      start,
+    });
+    for (const s of json.result || []) map.set(String(s.STATUS_ID), s.NAME);
+    if (!json.next) break;
+    start = json.next;
+  }
+  return map;
+}
+
 async function buildSourceMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   let start = 0;
@@ -199,7 +218,10 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const sourceMap = await buildSourceMap();
+    const [sourceMap, leadStatusMap] = await Promise.all([
+      buildSourceMap(),
+      buildLeadStatusMap(),
+    ]);
     if (sourceMap.size === 0) {
       return new Response(JSON.stringify({
         success: false,
@@ -246,7 +268,7 @@ Deno.serve(async (req) => {
     while (phase === "leads" && timeLeft() > 8000) {
       const json = await bitrixCall("crm.lead.list", {
         filter: { SOURCE_ID: sourceIds, ">ID": leadsLastId },
-        select: ["ID", "SOURCE_ID", "DATE_CREATE", FIELD_QUALIFIED_DATE],
+        select: ["ID", "SOURCE_ID", "DATE_CREATE", "STATUS_ID", FIELD_QUALIFIED_DATE],
         order: { ID: "ASC" },
         start: 0,
       });
@@ -269,6 +291,8 @@ Deno.serve(async (req) => {
           source_marker: sourceMap.get(String(lead.SOURCE_ID || "")) ?? null,
           created_at: createdIso,
           qualified_at: toIso(lead[FIELD_QUALIFIED_DATE]),
+          status_id: lead.STATUS_ID ? String(lead.STATUS_ID) : null,
+          status_name: leadStatusMap.get(String(lead.STATUS_ID || "")) ?? null,
           synced_at: new Date().toISOString(),
         });
       }
