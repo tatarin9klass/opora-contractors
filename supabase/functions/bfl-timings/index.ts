@@ -26,7 +26,16 @@ const BITRIX_WEBHOOK = "https://stopdolg.bitrix24.ru/rest/2708/krxomqqp0tb1b0jc"
 const FIELD_QUALIFIED_DATE = "UF_CRM_DATETIME_KVAL_LIDA_KL";
 
 const MEETING_ENTITY_TYPE_ID = 1044;
-const MEETING_STAGE_SUCCESS = "DT1044_64:SUCCESS";
+const MEETING_CATEGORY_ID = 64;
+
+// Реальное время встречи. closedate для этого не годится: у него тип `date`,
+// времени нет вообще (проверено на записи 214 — closedate 30.03 «полночь»,
+// а встреча была в 13:00). Отсюда же брались отрицательные интервалы, когда
+// квал проставлен утром, а встреча в тот же день.
+const FIELD_MEETING_DATETIME = "ufCrm28Datetime";
+// Техническое поле, куда БП пишет состояние встречи («Проведена» и т.п.).
+// Забираем как есть, классифицировать будем по факту увиденного.
+const FIELD_MEETING_STATUS = "ufCrm28_1742814152";
 
 // Показываем с 16 июля — с этого дня данные заводятся системно. Но лиды
 // тянем с запасом назад: лид, созданный в мае и отквалившийся в августе,
@@ -273,12 +282,17 @@ Deno.serve(async (req) => {
     }
 
     // --- фаза 2: встречи ---------------------------------------------------
-    // select не указываем намеренно: нужны все поля, чтобы найти среди них
-    // ссылку на лид.
+    // select не указываем намеренно: нужны все поля, в том числе
+    // ufCrm28Datetime и техническое поле статуса.
+    //
+    // Фильтра по стадии больше нет: раньше тянулась только «успех», то есть
+    // были видны состоявшиеся встречи и не видно назначенных и отменённых —
+    // доходимость посчитать было не из чего. Теперь берём всю воронку СП и
+    // храним стадию, а что считать отменённой, разберём по факту.
     while (phase === "meetings" && timeLeft() > 8000) {
       const json = await bitrixCall("crm.item.list", {
         entityTypeId: MEETING_ENTITY_TYPE_ID,
-        filter: { stageId: MEETING_STAGE_SUCCESS },
+        filter: { categoryId: MEETING_CATEGORY_ID },
         order: { id: "ASC" },
         start: meetingsScan,
       });
@@ -298,9 +312,13 @@ Deno.serve(async (req) => {
 
       const rows: any[] = [];
       for (const m of page) {
+        // Момент встречи: настоящее время, и только если его нет — дата из
+        // closedate. По нему же отсекаем период.
+        const scheduledIso = toIso(m[FIELD_MEETING_DATETIME]);
         const heldIso = toIso(m.closedate);
-        if (!heldIso) continue;
-        if (toDateMsk(m.closedate) < MEETING_MIN_DATE) continue;
+        const momentIso = scheduledIso ?? heldIso;
+        if (!momentIso) continue;
+        if (toDateMsk(momentIso) < MEETING_MIN_DATE) continue;
         const rawLead = leadField ? m[leadField] : null;
         const leadId = rawLead ? Number(rawLead) : null;
         if (!leadId) meetingsWithoutLead += 1;
@@ -309,6 +327,11 @@ Deno.serve(async (req) => {
           lead_id: leadId && !isNaN(leadId) ? leadId : null,
           source_marker: sourceMap.get(String(m.sourceId || "")) ?? null,
           held_at: heldIso,
+          scheduled_at: scheduledIso,
+          created_time: toIso(m.createdTime),
+          moved_time: toIso(m.movedTime),
+          stage_id: String(m.stageId || ""),
+          status_text: m[FIELD_MEETING_STATUS] ?? null,
           synced_at: new Date().toISOString(),
         });
       }
