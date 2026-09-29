@@ -132,17 +132,27 @@ async function findStartLeadId(sourceIds: string[], minDate: string): Promise<nu
   let lo = 0;
   let hi = maxId;
   let answer = maxId;
-  while (lo <= hi) {
+  // Предохранитель: диапазон ниже честно делится пополам на каждом шаге, но
+  // цена ошибки тут — бесконечный цикл запросов в Битрикс, поэтому ограничим
+  // число шагов явно. 60 итераций хватает на диапазон в 10^18.
+  for (let guard = 0; guard < 60 && lo <= hi; guard++) {
     const mid = Math.floor((lo + hi) / 2);
     const found = await firstFrom(mid);
     if (!found) {
+      // Ни одного лида с ID >= mid — значит граница левее.
       hi = mid - 1;
       continue;
     }
     if (found.date >= minDate) {
+      // Подходит: запоминаем и ищем границу левее.
+      // ВАЖНО: двигаем hi именно по mid, а не по found.id. ID лидов БФЛ
+      // разрежены, и found.id может оказаться сильно ПРАВЕЕ текущего hi —
+      // тогда hi = found.id - 1 расширил бы диапазон вместо сужения, и
+      // поиск зациклился бы.
       answer = found.id;
-      hi = found.id - 1;
+      hi = mid - 1;
     } else {
+      // Слишком старый — граница правее найденного.
       lo = found.id + 1;
     }
   }

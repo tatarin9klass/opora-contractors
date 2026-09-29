@@ -78,8 +78,14 @@ export default function DependenciesPage({ isAdmin }) {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}`, 'apikey': ANON_KEY },
           body: JSON.stringify(pass === 0 ? { reset: true } : {}),
         })
-        const json = await res.json()
-        if (!json.success) { setError(json.error || 'Неизвестная ошибка'); break }
+        const json = await res.json().catch(() => null)
+        if (!json || !json.success) {
+          // Без статуса и тела такие сбои неотличимы друг от друга: упала
+          // сама функция, отвалился шлюз или её убило по таймауту.
+          const detail = json ? (json.error || JSON.stringify(json)) : 'пустой ответ'
+          setError(`HTTP ${res.status}: ${detail}`)
+          break
+        }
         leads += json.leads_upserted || 0
         meetings += json.meetings_upserted || 0
         setProgress({ ...json, total_leads: leads, total_meetings: meetings, pass: pass + 1 })
