@@ -19,11 +19,13 @@ const CHARTS = [
   },
   {
     metric: 'qual_to_meeting',
+    usesMeetings: true,
     title: '2. Квал → встреча',
     hint: 'Сколько времени проходит от квалификации лида до проведённой встречи. Замер относится к неделе встречи.',
   },
   {
     metric: 'lead_to_meeting',
+    usesMeetings: true,
     title: '3. Лид → встреча (сквозной)',
     hint: 'Полный путь от создания лида до проведённой встречи. Замер относится к неделе встречи.',
   },
@@ -43,6 +45,7 @@ function weekLabel(iso) {
 
 export default function DependenciesPage({ isAdmin }) {
   const [rows, setRows] = useState([])
+  const [coverage, setCoverage] = useState([])
   const [loading, setLoading] = useState(true)
   const [unit, setUnit] = useState('hours')
   const [running, setRunning] = useState(false)
@@ -53,9 +56,14 @@ export default function DependenciesPage({ isAdmin }) {
   async function load() {
     setLoading(true)
     try {
-      const data = await fetchAllRows(() =>
-        supabase.from('bfl_timing_weekly').select('*').gte('week_start', MIN_WEEK).order('week_start'))
+      const [data, cov] = await Promise.all([
+        fetchAllRows(() =>
+          supabase.from('bfl_timing_weekly').select('*').gte('week_start', MIN_WEEK).order('week_start')),
+        fetchAllRows(() =>
+          supabase.from('bfl_timing_coverage').select('*').gte('week_start', MIN_WEEK).order('week_start')),
+      ])
       setRows(data)
+      setCoverage(cov)
     } catch (e) {
       setError(String(e))
     }
@@ -129,6 +137,17 @@ export default function DependenciesPage({ isAdmin }) {
     }
     return out
   }, [rows, weeks, factor])
+
+  const covByWeek = useMemo(() => new Map(coverage.map(c => [c.week_start, c])), [coverage])
+
+  // Итоги охвата за весь показанный период. Нужны, чтобы под графиком одной
+  // строкой было видно, на какой доле встреч он вообще построен.
+  const covTotals = useMemo(() => coverage.reduce((a, c) => ({
+    total: a.total + (c.meetings_total || 0),
+    measured: a.measured + (c.measured || 0),
+    leadAfter: a.leadAfter + (c.lead_after_meeting || 0),
+    missing: a.missing + (c.lead_missing || 0),
+  }), { total: 0, measured: 0, leadAfter: 0, missing: 0 }), [coverage])
 
   // Если первый график данные дал, а второй пуст — значит встречи не удалось
   // связать с лидами. Это единственная неочевидная поломка в этой вкладке,
@@ -256,9 +275,33 @@ export default function DependenciesPage({ isAdmin }) {
                         <td className="td-muted">Выборка</td>
                         {data.map(d => <td key={d.week} style={{ textAlign: 'right' }} className="td-muted">{d.n || '—'}</td>)}
                       </tr>
+                      {c.usesMeetings && (
+                        <tr>
+                          <td className="td-muted">Охват</td>
+                          {data.map(d => {
+                            const cv = covByWeek.get(d.week)
+                            return (
+                              <td key={d.week} style={{ textAlign: 'right' }} className="td-muted">
+                                {cv ? `${cv.measured}/${cv.meetings_total}` : '—'}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
+
+                {c.usesMeetings && covTotals.total > 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                    Охват — сколько встреч недели вообще поддаётся замеру. За весь период измерено{' '}
+                    <b>{covTotals.measured} из {covTotals.total}</b> встреч БФЛ
+                    {' '}({Math.round(covTotals.measured / covTotals.total * 100)}%).
+                    Выпадают те, где лид заведён уже после встречи ({covTotals.leadAfter}) — время до
+                    несуществующего лида измерить нельзя. Чаще всего так у источников со «ЗВ» в названии:
+                    позвонили, встретились, лид завели потом.
+                  </div>
+                )}
               </>
             )}
           </div>
