@@ -170,7 +170,7 @@ export default function DependenciesPage({ isAdmin }) {
           <div className={`alert ${progress.done ? 'alert-info' : 'alert-warning'}`} style={{ marginTop: 12 }}>
             {progress.done
               ? `✅ Готово. Лидов: ${progress.total_leads}, встреч: ${progress.total_meetings}.`
-              : `⏳ Идёт загрузка (${progress.phase === 'leads' ? 'лиды' : 'встречи'})… проход ${progress.pass}, лидов ${progress.total_leads}, встреч ${progress.total_meetings}.`}
+              : `⏳ Идёт загрузка (${progress.phase === 'leads' ? 'лиды' : 'встречи'})… проход ${progress.pass}, записано лидов ${progress.total_leads}, встреч ${progress.total_meetings}.`}
           </div>
         )}
 

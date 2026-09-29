@@ -95,6 +95,62 @@ function detectLeadField(item: Record<string, unknown>): string | null {
   return keys.find((k) => /^parentid1$/i.test(k) || /^leadid$/i.test(k)) ?? null;
 }
 
+// ID первого лида, созданного не раньше minDate — двоичным поиском по ID.
+//
+// ЗАЧЕМ. Начинать обход с нуля нельзя: Битрикс отдаёт по 50 записей за
+// запрос, и вся история БФЛ до апреля прокручивалась бы вхолостую десятки
+// минут, записывая ноль строк. Фильтр по системному DATE_CREATE тут не
+// помощник — Битрикс его молча игнорирует (проверено на дневном импорте,
+// см. комментарии в bitrix-import). А вот фильтр по ID работает честно,
+// и ID монотонно растут вместе с датой создания — значит границу можно
+// найти двоичным поиском примерно за 18 запросов вместо тысяч.
+async function findStartLeadId(sourceIds: string[], minDate: string): Promise<number> {
+  // Первый реально существующий лид с ID >= x (ID разрежены: между лидами
+  // БФЛ лежат лиды других направлений, поэтому «взять лид с ID = mid»
+  // не сработало бы).
+  async function firstFrom(x: number): Promise<{ id: number; date: string } | null> {
+    const json = await bitrixCall("crm.lead.list", {
+      filter: { SOURCE_ID: sourceIds, ">=ID": x },
+      select: ["ID", "DATE_CREATE"],
+      order: { ID: "ASC" },
+      start: 0,
+    });
+    const item = (json.result || [])[0];
+    if (!item) return null;
+    return { id: Number(item.ID), date: toDateMsk(item.DATE_CREATE) };
+  }
+
+  const maxJson = await bitrixCall("crm.lead.list", {
+    filter: { SOURCE_ID: sourceIds },
+    select: ["ID"],
+    order: { ID: "DESC" },
+    start: 0,
+  });
+  const maxId = Number((maxJson.result || [])[0]?.ID || 0);
+  if (!maxId) return 0;
+
+  let lo = 0;
+  let hi = maxId;
+  let answer = maxId;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const found = await firstFrom(mid);
+    if (!found) {
+      hi = mid - 1;
+      continue;
+    }
+    if (found.date >= minDate) {
+      answer = found.id;
+      hi = found.id - 1;
+    } else {
+      lo = found.id + 1;
+    }
+  }
+  // Курсор в обходе — строгий (">ID"), поэтому отступаем на единицу назад,
+  // иначе первый же нужный лид будет пропущен.
+  return Math.max(0, answer - 1);
+}
+
 async function readState(supabase: any): Promise<Record<string, string>> {
   const { data } = await supabase.from("bfl_timing_sync_state").select("key, value");
   const out: Record<string, string> = {};
@@ -148,10 +204,19 @@ Deno.serve(async (req) => {
       await writeState(supabase, { phase, meetings_scan_start: "0" });
     }
     if (body.reset) {
-      await writeState(supabase, { phase: "leads", leads_last_id: "0", meetings_scan_start: "0" });
+      // Не с нуля, а сразу с границы нужного периода — иначе первые проходы
+      // уходят на прокрутку старой истории впустую.
+      leadsLastId = await findStartLeadId(sourceIds, LEAD_MIN_DATE);
+      meetingsScan = 0;
+      await writeState(supabase, {
+        phase: "leads",
+        leads_last_id: String(leadsLastId),
+        meetings_scan_start: "0",
+      });
     }
 
     let leadsUpserted = 0;
+    let leadsScanned = 0;
     let meetingsUpserted = 0;
     let done = false;
     let leadField: string | null = state.meeting_lead_field || null;
@@ -175,6 +240,7 @@ Deno.serve(async (req) => {
       }
 
       const rows: any[] = [];
+      leadsScanned += page.length;
       for (const lead of page) {
         const createdIso = toIso(lead.DATE_CREATE);
         if (!createdIso) continue;
@@ -256,6 +322,8 @@ Deno.serve(async (req) => {
       done,
       phase,
       leads_upserted: leadsUpserted,
+      leads_scanned: leadsScanned,
+      leads_last_id: leadsLastId,
       meetings_upserted: meetingsUpserted,
       meeting_lead_field: leadField,
       meetings_without_lead: meetingsWithoutLead,
