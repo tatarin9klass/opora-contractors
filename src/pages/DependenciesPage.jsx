@@ -46,6 +46,7 @@ function weekLabel(iso) {
 export default function DependenciesPage({ isAdmin }) {
   const [rows, setRows] = useState([])
   const [coverage, setCoverage] = useState([])
+  const [outcome, setOutcome] = useState([])
   const [loading, setLoading] = useState(true)
   const [unit, setUnit] = useState('hours')
   const [running, setRunning] = useState(false)
@@ -56,14 +57,17 @@ export default function DependenciesPage({ isAdmin }) {
   async function load() {
     setLoading(true)
     try {
-      const [data, cov] = await Promise.all([
+      const [data, cov, out] = await Promise.all([
         fetchAllRows(() =>
           supabase.from('bfl_timing_weekly').select('*').gte('week_start', MIN_WEEK).order('week_start')),
         fetchAllRows(() =>
           supabase.from('bfl_timing_coverage').select('*').gte('week_start', MIN_WEEK).order('week_start')),
+        fetchAllRows(() =>
+          supabase.from('bfl_meeting_outcome_weekly').select('*').gte('week_start', MIN_WEEK).order('week_start')),
       ])
       setRows(data)
       setCoverage(cov)
+      setOutcome(out)
     } catch (e) {
       setError(String(e))
     }
@@ -148,6 +152,25 @@ export default function DependenciesPage({ isAdmin }) {
     leadAfter: a.leadAfter + (c.lead_after_meeting || 0),
     missing: a.missing + (c.lead_missing || 0),
   }), { total: 0, measured: 0, leadAfter: 0, missing: 0 }), [coverage])
+
+  // Доходимость: сколько назначенных встреч реально состоялось. Знаменатель —
+  // только отработанные попытки, встречи «в работе» в него не идут, иначе
+  // текущая неделя всегда выглядит провальной.
+  const outcomeData = useMemo(() => outcome.map(o => ({
+    week: o.week_start,
+    xLabel: weekLabel(o.week_start),
+    rate: o.rate == null ? null : Number(o.rate),
+    scheduled: o.scheduled,
+    held: o.held,
+    failed: o.failed,
+    pending: o.pending,
+  })), [outcome])
+
+  const outcomeTotals = useMemo(() => outcome.reduce((a, o) => ({
+    held: a.held + (o.held || 0),
+    failed: a.failed + (o.failed || 0),
+    pending: a.pending + (o.pending || 0),
+  }), { held: 0, failed: 0, pending: 0 }), [outcome])
 
   // Если первый график данные дал, а второй пуст — значит встречи не удалось
   // связать с лидами. Это единственная неочевидная поломка в этой вкладке,
@@ -307,6 +330,73 @@ export default function DependenciesPage({ isAdmin }) {
           </div>
         )
       })}
+
+      {outcomeData.length > 0 && (
+        <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 16 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>4. Доходимость встреч</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+            Какая доля назначенных встреч реально состоялась. Неделя — по плановому времени встречи,
+            то есть каждая попытка засчитывается в ту неделю, на которую её назначали.
+          </div>
+
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={outcomeData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#dce8d8" />
+              <XAxis dataKey="xLabel" tick={{ fontSize: 11, fill: '#8a9590' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#8a9590' }} width={45} domain={[0, 100]} unit="%" />
+              <Tooltip
+                formatter={v => [v == null ? '—' : `${v}%`, 'Доходимость']}
+                labelFormatter={(label, payload) => {
+                  const d = payload?.[0]?.payload
+                  if (!d) return label
+                  return `${label} · состоялось ${d.held} из ${d.held + d.failed}${d.pending ? `, в работе ${d.pending}` : ''}`
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="rate" name="Доходимость, %" stroke="#3A7E34" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+
+          <div style={{ overflowX: 'auto', marginTop: 10 }}>
+            <table className="table-compact">
+              <thead>
+                <tr>
+                  <th>Неделя</th>
+                  {outcomeData.map(d => <th key={d.week} style={{ textAlign: 'right' }}>{d.xLabel}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Доходимость</td>
+                  {outcomeData.map(d => <td key={d.week} style={{ textAlign: 'right' }}>{d.rate == null ? '—' : `${d.rate}%`}</td>)}
+                </tr>
+                <tr>
+                  <td className="td-muted">Состоялось</td>
+                  {outcomeData.map(d => <td key={d.week} style={{ textAlign: 'right' }} className="td-muted">{d.held}</td>)}
+                </tr>
+                <tr>
+                  <td className="td-muted">Сорвалось</td>
+                  {outcomeData.map(d => <td key={d.week} style={{ textAlign: 'right' }} className="td-muted">{d.failed}</td>)}
+                </tr>
+                <tr>
+                  <td className="td-muted">В работе</td>
+                  {outcomeData.map(d => <td key={d.week} style={{ textAlign: 'right' }} className="td-muted">{d.pending || '—'}</td>)}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+            За весь период: состоялось <b>{outcomeTotals.held}</b>, сорвалось <b>{outcomeTotals.failed}</b>
+            {outcomeTotals.pending > 0 && <>, ещё в работе {outcomeTotals.pending}</>} —
+            доходимость{' '}
+            <b>{Math.round(outcomeTotals.held / (outcomeTotals.held + outcomeTotals.failed) * 100)}%</b>.
+            На каждое назначение в Битриксе заводится отдельная запись, поэтому считаются попытки:
+            один лид, которому встречу переназначали трижды, даёт три попытки и максимум одну состоявшуюся.
+            «В работе» — встречи с датой в будущем, в знаменатель они не идут.
+          </div>
+        </div>
+      )}
 
       {rows.length > 0 && (
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
