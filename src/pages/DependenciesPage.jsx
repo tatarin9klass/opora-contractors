@@ -4,6 +4,7 @@ import { supabase, fetchAllRows } from '../lib/supabase.js'
 import { weekStartOf } from '../lib/dateContext.js'
 
 const FUNCTION_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/bfl-timings'
+const STAGES_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/bfl-stages'
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXV1ZWh4YXZ3bHJma29ubnp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNzY4MzAsImV4cCI6MjA5NzY1MjgzMH0.BvX2ZBVSs17Vuwq_ok_e_QyAck0FG2yYTtuOkbaUrqU'
 
 // Системный импорт начался 16 июля — раньше этой даты показывать нечего.
@@ -54,6 +55,8 @@ export default function DependenciesPage({ isAdmin }) {
   const [progress, setProgress] = useState(null)
   const [error, setError] = useState(null)
   const cancelRef = useRef(false)
+  const [stagesRunning, setStagesRunning] = useState(false)
+  const [stagesProgress, setStagesProgress] = useState(null)
 
   async function load() {
     setLoading(true)
@@ -112,6 +115,36 @@ export default function DependenciesPage({ isAdmin }) {
       setError(String(e))
     }
     setRunning(false)
+  }
+
+  // История стадий — отдельная загрузка: объём больше, чем у лидов и встреч
+  // вместе взятых, и нужна она не для графиков, а для разбора недозвонов.
+  async function runStages() {
+    setStagesRunning(true)
+    setError(null)
+    cancelRef.current = false
+    let total = 0
+    try {
+      for (let pass = 0; pass < 200; pass++) {
+        if (cancelRef.current) break
+        const res = await fetch(STAGES_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}`, 'apikey': ANON_KEY },
+          body: JSON.stringify(pass === 0 ? { reset: true } : {}),
+        })
+        const json = await res.json().catch(() => null)
+        if (!json || !json.success) {
+          setError(`HTTP ${res.status}: ${json ? (json.error || JSON.stringify(json)) : 'пустой ответ'}`)
+          break
+        }
+        total += json.imported || 0
+        setStagesProgress({ ...json, total, pass: pass + 1 })
+        if (json.done) break
+      }
+    } catch (e) {
+      setError(String(e))
+    }
+    setStagesRunning(false)
   }
 
   const factor = unit === 'hours' ? 1 : 24
@@ -221,7 +254,10 @@ export default function DependenciesPage({ isAdmin }) {
               <button className="btn btn-primary btn-sm" onClick={runSync} disabled={running}>
                 {running ? 'Загружаем из Битрикса...' : '🔄 Обновить данные'}
               </button>
-              {running && (
+              <button className="btn btn-secondary btn-sm" onClick={runStages} disabled={stagesRunning || running}>
+                {stagesRunning ? 'Грузим историю стадий...' : '📜 История стадий'}
+              </button>
+              {(running || stagesRunning) && (
                 <button className="btn btn-ghost btn-sm" onClick={() => { cancelRef.current = true }}>Остановить</button>
               )}
             </>
@@ -235,6 +271,14 @@ export default function DependenciesPage({ isAdmin }) {
             {progress.done
               ? `✅ Готово. Лидов: ${progress.total_leads}, встреч: ${progress.total_meetings}.`
               : `⏳ Идёт загрузка (${progress.phase === 'leads' ? 'лиды' : 'встречи'})… проход ${progress.pass}, записано лидов ${progress.total_leads}, встреч ${progress.total_meetings}.`}
+          </div>
+        )}
+
+        {stagesProgress && (
+          <div className={`alert ${stagesProgress.done ? 'alert-info' : 'alert-warning'}`} style={{ marginTop: 12 }}>
+            {stagesProgress.done
+              ? `✅ История стадий загружена. Записей: ${stagesProgress.total}.`
+              : `⏳ История стадий… проход ${stagesProgress.pass}, записей ${stagesProgress.total}.`}
           </div>
         )}
 
