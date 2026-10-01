@@ -264,19 +264,24 @@ select min(bfl_meeting_moment(scheduled_at, held_at))::date as начало
 from bfl_meeting_timings
 where source_marker is not null;
 
+-- ПРО СКОРОСТЬ. Первая версия брала границу окна соединением с
+-- bfl_analysis_window, и запрос вис: планировщик не может подставить границу
+-- как константу, раскрывает тяжёлую bfl_lead_dialogue_owner внутрь
+-- соединения и пересобирает её неудачным способом. Лечится двумя приёмами —
+-- скалярным подзапросом вместо соединения и materialized, который заставляет
+-- посчитать каждую часть ровно один раз.
 drop view if exists bfl_manager_end_to_end;
 create view bfl_manager_end_to_end with (security_invoker = true) as
-with w as (select начало from bfl_analysis_window),
-dial as (
+with dial as materialized (
   select
     coalesce(o.поговорил_последним, '— не загружен —') as менеджер,
     count(*)::integer as разговоров,
     count(*) filter (where o.стал_квалом)::integer as квалов
-  from bfl_lead_dialogue_owner o, w
-  where o.последний_диалог::date >= w.начало
+  from bfl_lead_dialogue_owner o
+  where o.последний_диалог >= (select начало from bfl_analysis_window)
   group by 1
 ),
-meet as (
+meet as materialized (
   select
     coalesce(scheduled_by_name, '— не указан —') as менеджер,
     count(*)::integer as назначено,
