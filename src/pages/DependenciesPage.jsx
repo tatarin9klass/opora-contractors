@@ -5,6 +5,7 @@ import { weekStartOf } from '../lib/dateContext.js'
 
 const FUNCTION_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/bfl-timings'
 const STAGES_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/bfl-stages'
+const CALLS_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/bfl-calls'
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXV1ZWh4YXZ3bHJma29ubnp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNzY4MzAsImV4cCI6MjA5NzY1MjgzMH0.BvX2ZBVSs17Vuwq_ok_e_QyAck0FG2yYTtuOkbaUrqU'
 
 // Системный импорт начался 16 июля — раньше этой даты показывать нечего.
@@ -57,6 +58,8 @@ export default function DependenciesPage({ isAdmin }) {
   const cancelRef = useRef(false)
   const [stagesRunning, setStagesRunning] = useState(false)
   const [stagesProgress, setStagesProgress] = useState(null)
+  const [callsRunning, setCallsRunning] = useState(false)
+  const [callsProgress, setCallsProgress] = useState(null)
 
   async function load() {
     setLoading(true)
@@ -145,6 +148,34 @@ export default function DependenciesPage({ isAdmin }) {
       setError(String(e))
     }
     setStagesRunning(false)
+  }
+
+  async function runCalls() {
+    setCallsRunning(true)
+    setError(null)
+    cancelRef.current = false
+    let total = 0
+    try {
+      for (let pass = 0; pass < 600; pass++) {
+        if (cancelRef.current) break
+        const res = await fetch(CALLS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}`, 'apikey': ANON_KEY },
+          body: JSON.stringify(pass === 0 ? { reset: true } : {}),
+        })
+        const json = await res.json().catch(() => null)
+        if (!json || !json.success) {
+          setError(`HTTP ${res.status}: ${json ? (json.error || JSON.stringify(json)) : 'пустой ответ'}`)
+          break
+        }
+        total += json.imported || 0
+        setCallsProgress({ ...json, total, pass: pass + 1 })
+        if (json.done) break
+      }
+    } catch (e) {
+      setError(String(e))
+    }
+    setCallsRunning(false)
   }
 
   const factor = unit === 'hours' ? 1 : 24
@@ -257,7 +288,10 @@ export default function DependenciesPage({ isAdmin }) {
               <button className="btn btn-secondary btn-sm" onClick={runStages} disabled={stagesRunning || running}>
                 {stagesRunning ? 'Грузим историю стадий...' : '📜 История стадий'}
               </button>
-              {(running || stagesRunning) && (
+              <button className="btn btn-secondary btn-sm" onClick={runCalls} disabled={callsRunning || running || stagesRunning}>
+                {callsRunning ? 'Грузим звонки...' : '📞 Звонки'}
+              </button>
+              {(running || stagesRunning || callsRunning) && (
                 <button className="btn btn-ghost btn-sm" onClick={() => { cancelRef.current = true }}>Остановить</button>
               )}
             </>
@@ -279,6 +313,14 @@ export default function DependenciesPage({ isAdmin }) {
             {stagesProgress.done
               ? `✅ История стадий загружена. Записей: ${stagesProgress.total}.`
               : `⏳ История стадий… проход ${stagesProgress.pass}, записей ${stagesProgress.total}.`}
+          </div>
+        )}
+
+        {callsProgress && (
+          <div className={`alert ${callsProgress.done ? 'alert-info' : 'alert-warning'}`} style={{ marginTop: 12 }}>
+            {callsProgress.done
+              ? `✅ Звонки загружены. Записей: ${callsProgress.total}.`
+              : `⏳ Звонки… проход ${callsProgress.pass}, записей ${callsProgress.total}.`}
           </div>
         )}
 
