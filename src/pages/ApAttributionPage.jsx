@@ -41,9 +41,9 @@ export default function ApAttributionPage() {
 
   useEffect(() => {
     Promise.all([
-      fetchAllRows('ap_attribution_totals', '*'),
-      fetchAllRows('ap_recommenders', '*'),
-      fetchAllRows('ap_attribution_rows', '*'),
+      fetchAllRows(() => supabase.from('ap_attribution_totals').select('*')),
+      fetchAllRows(() => supabase.from('ap_recommenders').select('*')),
+      fetchAllRows(() => supabase.from('ap_attribution_rows').select('*')),
     ])
       .then(([t, r, rw]) => { setTotals(t); setRecs(r); setRows(rw) })
       .catch(e => setError(String(e?.message || e)))
