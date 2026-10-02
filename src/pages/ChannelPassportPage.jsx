@@ -49,7 +49,7 @@ export default function ChannelPassportPage({ channelId, onBack, isAdmin }) {
   const channel = data?.channels.find(c => c.id === channelId) || null
   const summary = useMemo(() => {
     if (!data) return null
-    return aggregateChannels(data, period).find(r => r.channelId === channelId) || null
+    return aggregateChannels(data, period, true).find(r => r.channelId === channelId) || null
   }, [data, period, channelId])
   const sourceRows = useMemo(() => (data ? aggregateSources(data, channelId, period) : []), [data, channelId, period])
 

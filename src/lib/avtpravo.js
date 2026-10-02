@@ -46,16 +46,22 @@ export function monthsLabel(months) {
 }
 
 export async function loadAvtpData() {
-  const [{ data: channels }, { data: sources }, stats, { data: expenses }] = await Promise.all([
+  // Обе витрины грузим сразу: переключение «с учётом сверки» должно быть
+  // мгновенным, а объём тут невелик — сотни строк, не тысячи.
+  const [{ data: channels }, { data: sources }, stats, corrected, { data: expenses }] = await Promise.all([
     supabase.from('ap_channels').select('*').order('sort_order'),
     supabase.from('ap_sources').select('*').order('bitrix_name'),
     fetchAllRows(() => supabase.from('ap_monthly_stats').select('*')),
+    // Витрины может не быть, если миграция сверки не применена — тогда просто
+    // работаем как раньше, без тумблера.
+    fetchAllRows(() => supabase.from('ap_monthly_stats_corrected').select('*')).catch(() => null),
     supabase.from('ap_monthly_expenses').select('*'),
   ])
   return {
     channels: channels || [],
     sources: sources || [],
     stats: stats || [],
+    corrected: corrected || null,
     expenses: expenses || [],
   }
 }
@@ -78,8 +84,9 @@ export function cpo(spend, contracts) {
 // просто массив из одного элемента). Источник, не привязанный ни к одному
 // каналу, не теряется — он попадает в псевдоканал с channelId = null, и его
 // видно на экране отдельной строкой «Без канала».
-export function aggregateChannels({ channels, sources, stats, expenses }, months) {
+export function aggregateChannels({ channels, sources, stats, corrected, expenses }, months, useCorrected = false) {
   const period = new Set(months)
+  const facts = useCorrected && corrected ? corrected : stats
   const sourceToChannel = new Map()
   const sourceToDirection = new Map()
   for (const s of sources) {
@@ -95,11 +102,11 @@ export function aggregateChannels({ channels, sources, stats, expenses }, months
 
   const acc = new Map()
   function bucket(channelId) {
-    if (!acc.has(channelId)) acc.set(channelId, { leads: 0, contracts: 0 })
+    if (!acc.has(channelId)) acc.set(channelId, { leads: 0, contracts: 0, bySource: new Map() })
     return acc.get(channelId)
   }
 
-  for (const row of stats) {
+  for (const row of facts) {
     if (!period.has(row.month)) continue
     const channelId = sourceToChannel.get(row.source_name) ?? null
     // Непривязанный источник копится отдельно по своему направлению, чтобы
@@ -108,10 +115,15 @@ export function aggregateChannels({ channels, sources, stats, expenses }, months
     const b = bucket(key)
     b.leads += row.leads || 0
     b.contracts += row.contracts || 0
+    // Разбивка внутри канала — для раскрытия строки по клику.
+    const cur = b.bySource.get(row.source_name) || { leads: 0, contracts: 0 }
+    cur.leads += row.leads || 0
+    cur.contracts += row.contracts || 0
+    b.bySource.set(row.source_name, cur)
   }
 
   const out = channels.map(c => {
-    const b = acc.get(c.id) || { leads: 0, contracts: 0 }
+    const b = acc.get(c.id) || { leads: 0, contracts: 0, bySource: new Map() }
     const spend = spendByChannel.get(c.id) || 0
     return {
       channelId: c.id,
@@ -122,12 +134,19 @@ export function aggregateChannels({ channels, sources, stats, expenses }, months
       leads: b.leads,
       contracts: b.contracts,
       cpo: cpo(spend, b.contracts),
+      fromCorrection: !!c.from_correction,
+      sources: [...b.bySource.entries()]
+        .map(([name, v]) => ({ name, ...v }))
+        .sort((a, z) => z.contracts - a.contracts || z.leads - a.leads),
     }
   })
 
   for (const dir of ['avtpr', 'avrkm']) {
     const orphan = acc.get(`orphan:${dir}`)
     if (!orphan || (orphan.leads === 0 && orphan.contracts === 0)) continue
+    const orphanSources = [...orphan.bySource.entries()]
+      .map(([name, v]) => ({ name, ...v }))
+      .sort((a, z) => z.contracts - a.contracts || z.leads - a.leads)
     out.push({
       channelId: null,
       name: 'Без канала',
@@ -137,6 +156,8 @@ export function aggregateChannels({ channels, sources, stats, expenses }, months
       leads: orphan.leads,
       contracts: orphan.contracts,
       cpo: null,
+      fromCorrection: false,
+      sources: orphanSources,
     })
   }
 
@@ -146,11 +167,12 @@ export function aggregateChannels({ channels, sources, stats, expenses }, months
 // Разрез по источникам внутри одного канала за выбранные месяцы. Цены здесь
 // не показываются: расход вводится на канал целиком, делить его между
 // источниками нечем и незачем.
-export function aggregateSources({ sources, stats }, channelId, months) {
+export function aggregateSources({ sources, stats, corrected }, channelId, months, useCorrected = true) {
   const period = new Set(months)
+  const facts = useCorrected && corrected ? corrected : stats
   const own = sources.filter(s => s.channel_id === channelId)
   const byName = new Map()
-  for (const row of stats) {
+  for (const row of facts) {
     if (!period.has(row.month)) continue
     const acc = byName.get(row.source_name) || { leads: 0, contracts: 0 }
     acc.leads += row.leads || 0

@@ -31,6 +31,10 @@ export default function ChannelsPage({ onOpenChannel }) {
   const [loading, setLoading] = useState(true)
   const [sortKey, setSortKey] = useState(null)
   const [sortDir, setSortDir] = useState('desc')
+  // Сверка источников Автоправа. По умолчанию включена: цифры с ней ближе к
+  // реальности. Выключается одним кликом, чтобы было видно, что было до.
+  const [useCorrected, setUseCorrected] = useState(true)
+  const [expanded, setExpanded] = useState(() => new Set())
 
   useEffect(() => {
     loadAvtpData().then(d => {
@@ -57,7 +61,19 @@ export default function ChannelsPage({ onOpenChannel }) {
   // данных внутри диапазона просто ничего не добавит, но и не оборвёт период.
   const period = useMemo(() => monthsBetween(fromMonth, toMonth), [fromMonth, toMonth])
 
-  const rows = useMemo(() => (data ? aggregateChannels(data, period) : []), [data, period])
+  const rows = useMemo(
+    () => (data ? aggregateChannels(data, period, useCorrected) : []),
+    [data, period, useCorrected],
+  )
+  const hasCorrection = !!data?.corrected
+
+  function toggleExpand(id) {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
 
   function toggleSort(key) {
     if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
@@ -158,19 +174,50 @@ export default function ChannelsPage({ onOpenChannel }) {
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatNum(sub.contracts)}</td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{sub.cpo == null ? '—' : formatMoney(sub.cpo)}</td>
                   </tr>
-                  {groupRows.map(r => (
-                    <tr
-                      key={r.channelId || 'orphan'}
-                      style={{ cursor: r.channelId ? 'pointer' : 'default' }}
-                      onClick={() => r.channelId && onOpenChannel(r.channelId)}
-                    >
-                      <td style={{ paddingLeft: 24 }}>{r.name}</td>
-                      <td style={{ textAlign: 'right' }}>{formatMoney(r.spend)}</td>
-                      <td style={{ textAlign: 'right' }}>{formatNum(r.leads)}</td>
-                      <td style={{ textAlign: 'right' }}>{formatNum(r.contracts)}</td>
-                      <td style={{ textAlign: 'right' }}>{r.cpo == null ? '—' : formatMoney(r.cpo)}</td>
-                    </tr>
-                  ))}
+                  {groupRows.map(r => {
+                    const key = r.channelId || `orphan-${r.direction}`
+                    const open = expanded.has(key)
+                    const subs = r.sources || []
+                    return (
+                      <React.Fragment key={key}>
+                        <tr>
+                          <td style={{ paddingLeft: 24 }}>
+                            {subs.length > 0 && (
+                              <span
+                                onClick={e => { e.stopPropagation(); toggleExpand(key) }}
+                                style={{ cursor: 'pointer', color: 'var(--text-muted)', marginRight: 6, userSelect: 'none' }}
+                                title={open ? 'Свернуть источники' : 'Показать источники'}
+                              >{open ? '▾' : '▸'}</span>
+                            )}
+                            <span
+                              style={{ cursor: r.channelId ? 'pointer' : 'default' }}
+                              onClick={() => r.channelId && onOpenChannel(r.channelId)}
+                            >{r.name}</span>
+                            {r.fromCorrection && (
+                              <span style={{
+                                marginLeft: 8, fontSize: 10, padding: '1px 6px', borderRadius: 8,
+                                background: 'var(--green-bg)', color: 'var(--green-dark)',
+                                border: '1px solid var(--green-primary)', whiteSpace: 'nowrap',
+                              }}>из сверки</span>
+                            )}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>{formatMoney(r.spend)}</td>
+                          <td style={{ textAlign: 'right' }}>{formatNum(r.leads)}</td>
+                          <td style={{ textAlign: 'right' }}>{formatNum(r.contracts)}</td>
+                          <td style={{ textAlign: 'right' }}>{r.cpo == null ? '—' : formatMoney(r.cpo)}</td>
+                        </tr>
+                        {open && subs.map(sv => (
+                          <tr key={key + sv.name} style={{ background: 'var(--bg)' }}>
+                            <td style={{ paddingLeft: 52, fontSize: 13, color: 'var(--text-muted)' }}>{sv.name}</td>
+                            <td />
+                            <td style={{ textAlign: 'right', fontSize: 13, color: 'var(--text-muted)' }}>{formatNum(sv.leads)}</td>
+                            <td style={{ textAlign: 'right', fontSize: 13, color: 'var(--text-muted)' }}>{formatNum(sv.contracts)}</td>
+                            <td />
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    )
+                  })}
                 </React.Fragment>
               )
             })}
@@ -178,10 +225,30 @@ export default function ChannelsPage({ onOpenChannel }) {
         </table>
       </div>
 
+      {hasCorrection && (
+        <div style={{
+          marginTop: 10, padding: '8px 12px', borderRadius: 8,
+          background: useCorrected ? 'var(--green-bg)' : 'var(--bg)',
+          border: '1px solid var(--border)', fontSize: 13,
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', margin: 0 }}>
+            <input type="checkbox" checked={useCorrected} onChange={e => setUseCorrected(e.target.checked)} />
+            <b>С учётом сверки источников</b>
+          </label>
+          <span style={{ color: 'var(--text-muted)' }}>
+            {useCorrected
+              ? 'Договоры и породившие их лиды перевешены на реальные источники по ручному разбору 120 выигранных сделок. Месяц не меняется.'
+              : 'Показаны данные как есть из Битрикса, вместе с подменой источника при переводе лида из БФЛ.'}
+          </span>
+        </div>
+      )}
+
       <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
         Лиды — по дате создания лида. Договор — сделка, стоящая сейчас на договорной стадии воронки
         «Автоправо. Продажи» или «Аварийные комиссары»; относится к месяцу создания породившего её лида.
-        CPO = расход / договоры.
+        CPO = расход / договоры. Стрелка слева от канала раскрывает его источники.
+        {useCorrected && hasCorrection && ' Сверка касается только выигранных сделок, поэтому не выигравшие лиды из того же бага остаются в «Рекомендации».'}
       </div>
     </div>
   )
