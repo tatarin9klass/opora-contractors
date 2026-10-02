@@ -26,6 +26,7 @@ const NAV = {
   ],
   avtp: (isAdmin) => [
     { id: 'channels', icon: '📡', label: 'Каналы' },
+    { id: 'apattr', icon: '🔍', label: 'Сверка источников' },
     ...(isAdmin ? [
       { id: 'apimport', icon: '📥', label: 'Импорт данных' },
       { id: 'apexpenses', icon: '💸', label: 'Ввод расходов' },

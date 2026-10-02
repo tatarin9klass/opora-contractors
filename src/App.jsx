@@ -10,6 +10,7 @@ import HelpPage from './pages/HelpPage.jsx'
 import RegularManagementPage from './pages/RegularManagementPage.jsx'
 import DependenciesPage from './pages/DependenciesPage.jsx'
 import ChannelsPage from './pages/ChannelsPage.jsx'
+import ApAttributionPage from './pages/ApAttributionPage.jsx'
 import ChannelPassportPage from './pages/ChannelPassportPage.jsx'
 import AvtpImportPage from './pages/AvtpImportPage.jsx'
 import ApExpensesPage from './pages/ApExpensesPage.jsx'
@@ -26,6 +27,7 @@ const PAGE_TITLES = {
   channels: 'Каналы — Автоправо',
   apimport: 'Импорт данных — Автоправо',
   apexpenses: 'Ввод расходов — Автоправо',
+  apattr: 'Сверка источников — Автоправо',
 }
 
 // Стартовый раздел каждого направления. Приложение всегда открывается на БФЛ.
@@ -33,7 +35,7 @@ const HOME_PAGE = { bfl: 'dashboard', avtp: 'channels' }
 
 // Разделы, которые относятся к направлению АВТОПРАВО — нужны, чтобы при
 // переключении направления не остаться на чужом экране.
-const AVTP_PAGES = new Set(['channels', 'channel', 'apimport', 'apexpenses'])
+const AVTP_PAGES = new Set(['channels', 'channel', 'apimport', 'apexpenses', 'apattr'])
 
 // Чисто write-инструменты: без информационной ценности для роли "просмотр",
 // скрываем их целиком из навигации, а не разрешаем открыть в disabled-виде.
@@ -128,6 +130,7 @@ function AppShell() {
           {safePage === 'channel' && channelId && <ChannelPassportPage channelId={channelId} onBack={backToChannels} isAdmin={isAdmin} />}
           {safePage === 'apimport' && <AvtpImportPage />}
           {safePage === 'apexpenses' && <ApExpensesPage />}
+          {safePage === 'apattr' && <ApAttributionPage />}
         </div>
       </div>
     </div>
