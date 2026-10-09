@@ -21,6 +21,7 @@ const NAV = {
     ...(isAdmin ? [
       { id: 'import', icon: '📥', label: 'Импорт данных' },
       { id: 'expenses', icon: '💸', label: 'Ввод расходов' },
+      { id: 'access', icon: '🔐', label: 'Доступы подрядчиков' },
     ] : []),
     { id: 'help', icon: '❓', label: 'Инструкция' },
   ],

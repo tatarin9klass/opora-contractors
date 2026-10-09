@@ -60,11 +60,11 @@ export default function ApAttributionPage() {
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [rows])
 
-  if (loading) return <div className="card">Загрузка сверки…</div>
-  if (error) return <div className="card" style={{ color: '#a33' }}>Ошибка: {error}</div>
+  if (loading) return <div className="info-card">Загрузка сверки…</div>
+  if (error) return <div className="info-card" style={{ color: '#a33' }}>Ошибка: {error}</div>
   if (!rows.length) {
     return (
-      <div className="card">
+      <div className="info-card">
         Сверка пуста — не применена миграция <code>20261005_ap_attribution_override.sql</code>.
       </div>
     )
@@ -74,7 +74,7 @@ export default function ApAttributionPage() {
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <div className="card">
+      <div className="info-card">
         <h3 style={{ marginTop: 0 }}>Разовая сверка источников</h3>
         <p style={{ color: '#666', margin: '0 0 12px' }}>
           Ручной разбор {formatNum(rows.length)} выигранных сделок за январь — сентябрь 2026.
@@ -96,9 +96,9 @@ export default function ApAttributionPage() {
         </p>
       </div>
 
-      <div className="card">
+      <div className="info-card">
         <h3 style={{ marginTop: 0 }}>Было → стало по источникам</h3>
-        <table className="table">
+        <table className="table-compact">
           <thead>
             <tr>
               <th style={{ textAlign: 'left' }}>Источник</th>
@@ -125,13 +125,13 @@ export default function ApAttributionPage() {
         </table>
       </div>
 
-      <div className="card">
+      <div className="info-card">
         <h3 style={{ marginTop: 0 }}>Рекомендации по рекомендателям</h3>
         <p style={{ color: '#666', margin: '0 0 10px' }}>
           Постоянные клиенты и сотрудники, которые регулярно приводят знакомых.
           В Битриксе все они лежат одним источником «Рекомендация».
         </p>
-        <table className="table">
+        <table className="table-compact">
           <thead>
             <tr>
               <th style={{ textAlign: 'left' }}>Рекомендатель</th>
@@ -155,7 +155,7 @@ export default function ApAttributionPage() {
         </table>
       </div>
 
-      <div className="card">
+      <div className="info-card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ margin: 0 }}>
             Построчно {showAll ? `(все ${rows.length})` : `(только расхождения: ${changed.length})`}
@@ -164,7 +164,7 @@ export default function ApAttributionPage() {
             {showAll ? 'Только расхождения' : 'Показать все'}
           </button>
         </div>
-        <table className="table" style={{ marginTop: 10 }}>
+        <table className="table-compact" style={{ marginTop: 10 }}>
           <thead>
             <tr>
               <th style={{ textAlign: 'left' }}>ID</th>

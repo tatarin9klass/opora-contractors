@@ -14,6 +14,9 @@ import ApAttributionPage from './pages/ApAttributionPage.jsx'
 import ChannelPassportPage from './pages/ChannelPassportPage.jsx'
 import AvtpImportPage from './pages/AvtpImportPage.jsx'
 import ApExpensesPage from './pages/ApExpensesPage.jsx'
+import PortalPage from './pages/PortalPage.jsx'
+import PortalAccessPage from './pages/PortalAccessPage.jsx'
+import PasswordChangePage from './pages/PasswordChangePage.jsx'
 import { AuthProvider, useAuth } from './lib/auth.jsx'
 
 const PAGE_TITLES = {
@@ -28,6 +31,7 @@ const PAGE_TITLES = {
   apimport: 'Импорт данных — Автоправо',
   apexpenses: 'Ввод расходов — Автоправо',
   apattr: 'Сверка источников — Автоправо',
+  access: 'Доступы подрядчиков',
 }
 
 // Стартовый раздел каждого направления. Приложение всегда открывается на БФЛ.
@@ -39,10 +43,10 @@ const AVTP_PAGES = new Set(['channels', 'channel', 'apimport', 'apexpenses', 'ap
 
 // Чисто write-инструменты: без информационной ценности для роли "просмотр",
 // скрываем их целиком из навигации, а не разрешаем открыть в disabled-виде.
-const ADMIN_ONLY_PAGES = new Set(['import', 'expenses', 'apimport', 'apexpenses'])
+const ADMIN_ONLY_PAGES = new Set(['import', 'expenses', 'apimport', 'apexpenses', 'access'])
 
 function AppShell() {
-  const { session, profile, isAdmin, loading, signOut } = useAuth()
+  const { session, profile, isAdmin, isContractor, mustChangePassword, loading, signOut } = useAuth()
   const [direction, setDirectionState] = useState('bfl')
   const [page, setPage] = useState('dashboard')
   const [passportId, setPassportId] = useState(null)
@@ -89,6 +93,17 @@ function AppShell() {
     )
   }
 
+  // Просроченный пароль: до смены не открываем ничего — ни кабинет, ни наши
+  // экраны. Запрет всё равно действует в базе (current_contractor_id не
+  // вернёт подрядчика), здесь только объяснение вместо пустого экрана.
+  if (mustChangePassword) return <PasswordChangePage />
+
+  // Кабинет подрядчика — отдельное приложение в том же бандле: без меню, без
+  // переключателя направлений, без единого нашего экрана. Разводка по роли
+  // стоит ДО всего остального именно поэтому: ниже нет ни одной ветки, где
+  // подрядчик мог бы оказаться на нашем экране.
+  if (isContractor) return <PortalPage />
+
   const safePage = !isAdmin && ADMIN_ONLY_PAGES.has(page) ? (HOME_PAGE[direction] || 'dashboard') : page
   // Направление считаем по самому разделу, а не по стейту — так подсветка меню
   // и заголовок не разъедутся, если раздел и направление на миг разошлись.
@@ -131,6 +146,7 @@ function AppShell() {
           {safePage === 'apimport' && <AvtpImportPage />}
           {safePage === 'apexpenses' && <ApExpensesPage />}
           {safePage === 'apattr' && <ApAttributionPage />}
+          {safePage === 'access' && <PortalAccessPage />}
         </div>
       </div>
     </div>

@@ -85,6 +85,27 @@ function toDateMsk(isoStr: string): string {
   return msk.toISOString().split("T")[0];
 }
 
+// Телефон и UTM — для кабинета подрядчика. Телефон лежит в многозначном поле:
+// Битрикс отдаёт массив объектов, а не строку, и берём из него первый номер
+// (у лида их почти всегда ровно один). Отдаём подрядчику целиком — по
+// решению руководителя: эти номера он нам и передаёт.
+function firstPhone(raw: unknown): string | null {
+  if (!raw) return null;
+  if (typeof raw === "string") return raw.trim() || null;
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const v = typeof item === "string" ? item : item?.VALUE;
+      if (v && String(v).trim()) return String(v).trim();
+    }
+  }
+  return null;
+}
+
+function utm(raw: unknown): string | null {
+  const s = raw == null ? "" : String(raw).trim();
+  return s || null;
+}
+
 // Битрикс отдаёт даты со смещением (+03:00) — new Date их разбирает корректно,
 // в базу кладём как timestamptz, поэтому таймзона не теряется.
 function toIso(raw: unknown): string | null {
@@ -274,22 +295,33 @@ Deno.serve(async (req) => {
     let leadsLastId = body.reset ? 0 : Number(state.leads_last_id || 0);
     let meetingsScan = body.reset ? 0 : Number(state.meetings_scan_start || 0);
 
-    // Начало нового цикла: лиды догружаем инкрементально (дата создания и
-    // дата квалификации задним числом не меняются... почти — квал могут
-    // проставить позже, поэтому раз в цикл имеет смысл прогнать reset),
-    // встречи пересканируем целиком.
-    if (phase === "" || phase === "idle") {
+    // ИСПРАВЛЕНО ДЛЯ КАБИНЕТА ПОДРЯДЧИКА: каждый новый цикл перечитывает лиды
+    // ЦЕЛИКОМ, а не догружает новые.
+    //
+    // Раньше курсор leads_last_id только рос, и лид, импортированный один раз,
+    // больше не обновлялся никогда. Для вкладки «Зависимости» это было почти
+    // безразлично: дата создания задним числом не меняется. Но подрядчик в
+    // кабинете выгружает ФАКТИЧЕСКУЮ СТАДИЮ своей заявки, а она меняется всю
+    // её жизнь — заявка переходит из «Взят в работу» в «Назначение встречи» и
+    // дальше. При инкрементальном импорте он вечно видел бы стадию на момент
+    // первого попадания лида в базу, то есть почти всегда «Новый лид». То же
+    // касается даты квала (её ставят позже создания) и телефона с UTM, которых
+    // у ранее импортированных лидов просто нет.
+    //
+    // Граница периода считается один раз и живёт в состоянии: двоичный поиск
+    // по ID — восемнадцать запросов в Битрикс, и повторять их каждый цикл
+    // незачем.
+    let startId = Number(state.leads_start_id || 0);
+    if (phase === "" || phase === "idle" || body.reset) {
+      if (!startId || body.reset) {
+        startId = await findStartLeadId(sourceIds, LEAD_MIN_DATE);
+        await writeState(supabase, { leads_start_id: String(startId) });
+      }
       phase = "leads";
-      meetingsScan = 0;
-      await writeState(supabase, { phase, meetings_scan_start: "0" });
-    }
-    if (body.reset) {
-      // Не с нуля, а сразу с границы нужного периода — иначе первые проходы
-      // уходят на прокрутку старой истории впустую.
-      leadsLastId = await findStartLeadId(sourceIds, LEAD_MIN_DATE);
+      leadsLastId = startId;
       meetingsScan = 0;
       await writeState(supabase, {
-        phase: "leads",
+        phase,
         leads_last_id: String(leadsLastId),
         meetings_scan_start: "0",
       });
@@ -307,7 +339,14 @@ Deno.serve(async (req) => {
     while (phase === "leads" && timeLeft() > 8000) {
       const json = await bitrixCall("crm.lead.list", {
         filter: { SOURCE_ID: sourceIds, ">ID": leadsLastId },
-        select: ["ID", "SOURCE_ID", "DATE_CREATE", "STATUS_ID", "ASSIGNED_BY_ID", FIELD_QUALIFIED_DATE],
+        select: [
+          "ID", "SOURCE_ID", "DATE_CREATE", "STATUS_ID", "ASSIGNED_BY_ID", FIELD_QUALIFIED_DATE,
+          // Для кабинета подрядчика: он выгружает свои заявки с телефоном и
+          // UTM. Поля добираются тем же проходом — отдельный импорт ради пяти
+          // колонок означал бы второй курсор и второй способ разъехаться с
+          // первым.
+          "PHONE", "UTM_SOURCE", "UTM_MEDIUM", "UTM_CAMPAIGN", "UTM_CONTENT", "UTM_TERM",
+        ],
         order: { ID: "ASC" },
         start: 0,
       });
@@ -334,6 +373,12 @@ Deno.serve(async (req) => {
           status_name: leadStatusMap.get(String(lead.STATUS_ID || "")) ?? null,
           assigned_by_id: lead.ASSIGNED_BY_ID ? Number(lead.ASSIGNED_BY_ID) : null,
           assigned_by_name: userMap.get(String(lead.ASSIGNED_BY_ID || "")) ?? null,
+          phone: firstPhone(lead.PHONE),
+          utm_source: utm(lead.UTM_SOURCE),
+          utm_medium: utm(lead.UTM_MEDIUM),
+          utm_campaign: utm(lead.UTM_CAMPAIGN),
+          utm_content: utm(lead.UTM_CONTENT),
+          utm_term: utm(lead.UTM_TERM),
           synced_at: new Date().toISOString(),
         });
       }
