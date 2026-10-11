@@ -45,7 +45,6 @@
 -- Блок ниже убирает всё, что было нужно только прежней схеме. Он безопасен на
 -- базе, где её не применяли: всё через if exists.
 -- ============================================================================
-drop trigger if exists trg_auth_password_changed on auth.users;
 drop trigger if exists trg_profile_contractor_created on profiles;
 drop trigger if exists trg_profile_contractor_created_after on profiles;
 drop function if exists on_auth_password_changed();
@@ -56,11 +55,41 @@ drop function if exists rotate_contractor_passwords();
 drop function if exists auth_password_fingerprint(uuid);
 drop table if exists contractor_password_state;
 
+-- Триггер на auth.users снимаем, только если он там есть. Простое
+-- «drop trigger if exists ... on auth.users» пришлось бы трогать чужую
+-- таблицу (её владелец — GoTrue, не мы) даже ради проверки, что трогать
+-- нечего, и на правах это может споткнуться.
 do $$
 begin
-  if exists (select 1 from pg_extension where extname = 'pg_cron')
-     and exists (select 1 from cron.job where jobname = 'rotate_contractor_passwords') then
-    perform cron.unschedule('rotate_contractor_passwords');
+  if exists (
+    select 1 from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'auth' and c.relname = 'users'
+      and t.tgname = 'trg_auth_password_changed'
+  ) then
+    execute 'drop trigger trg_auth_password_changed on auth.users';
+  end if;
+end $$;
+
+-- Расписание ротации снимаем так же осторожно, и по той же причине, по
+-- которой первая попытка этой миграции падала с «relation cron.job does not
+-- exist»: plpgsql разбирает ВЕСЬ текст условия до того, как начнёт его
+-- вычислять. Поэтому «if расширение есть and в cron.job есть запись» не
+-- спасает — упоминание cron.job ломает блок ещё на разборе, даже когда
+-- расширение не включено и до второй половины условия дело бы не дошло.
+-- Лечится обращением к cron.job только через динамический SQL, который
+-- разбирается в момент выполнения.
+do $$
+declare n integer;
+begin
+  if to_regclass('cron.job') is null then
+    return;
+  end if;
+  execute 'select count(*) from cron.job where jobname = $1'
+    into n using 'rotate_contractor_passwords';
+  if n > 0 then
+    execute 'select cron.unschedule($1)' using 'rotate_contractor_passwords';
     raise notice 'Расписание ротации снято — оно больше не нужно.';
   end if;
 end $$;
