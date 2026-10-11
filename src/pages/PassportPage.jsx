@@ -5,6 +5,7 @@ import { weekStart as getWeekStart, todayISO, addDaysISO, daysBetweenISO, weekSt
 import ChangeStatusModal from '../components/ChangeStatusModal.jsx'
 import AddDecisionModal from '../components/AddDecisionModal.jsx'
 import DeleteContractorModal from '../components/DeleteContractorModal.jsx'
+import ContractorAccessCard from '../components/ContractorAccessCard.jsx'
 
 // Системный импорт данных через приложение начался с 16 июля 2026 — выбор
 // произвольного диапазона дат в "Показателях подрядчика" раньше этой даты
@@ -791,6 +792,12 @@ export default function PassportPage({ contractorId, onBack, isAdmin }) {
               </div>
             )}
           </div>
+
+          {/* Доступ в кабинет — только админу: это управление учётными
+              записями, а не справочная информация о подрядчике. */}
+          {isAdmin && (
+            <ContractorAccessCard contractorId={contractorId} contractorName={contractor.name} />
+          )}
 
           {decisions.length > 0 && (
             <div className="info-card">
