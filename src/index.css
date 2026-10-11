@@ -553,6 +553,52 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
   border-radius: var(--radius-lg); padding: 32px; max-width: 420px; text-align: center;
 }
 
+/* --- Исход заявки: три группы, с которых начинается чтение экрана ---------
+   Подрядчик приходит с тремя вопросами — за что засчитали, что ещё в работе,
+   что в браке. Поэтому исход стоит крупно и первым, а четырнадцать стадий
+   разложены под ним: так видно, из чего сложилось каждое из трёх чисел.
+
+   Цвет тут означает состояние, а не принадлежность, поэтому взяты статусные
+   токены, а не серии графика: зелёный — принято, жёлтый — ещё решается,
+   серый — потери. Красный для брака сознательно не берётся: брак не вина
+   подрядчика по умолчанию, и кричать на него незачем. */
+.portal-outcomes { display: flex; gap: 8px; flex-wrap: wrap; }
+.portal-outcome {
+  flex: 1; min-width: 150px; text-align: left;
+  background: var(--white); border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 1px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.portal-outcome:hover { background: var(--green-bg); }
+.portal-outcome.active { background: var(--green-bg); border-color: var(--green-primary); }
+.portal-outcome.qual { border-left-color: var(--green-primary); }
+.portal-outcome.work { border-left-color: var(--yellow); }
+.portal-outcome.junk { border-left-color: var(--text-muted); }
+.portal-outcome-n { font-size: 22px; font-weight: 700; line-height: 1.1; }
+.portal-outcome-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.portal-outcome-sub { font-size: 11px; color: var(--text-muted); }
+
+.portal-stage-group { margin-top: 12px; }
+.portal-stage-group-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.4px; margin-bottom: 6px; color: var(--text-muted);
+}
+.portal-stage-group-title.qual { color: var(--green-primary); }
+.portal-stage-group-title.work { color: var(--yellow); }
+
+/* Метка исхода в строке заявки и в памятке. Текстом, а не одним цветом:
+   цвет здесь подсказка, а не единственный носитель смысла. */
+.portal-badge {
+  display: inline-block; margin-right: 7px; padding: 1px 7px;
+  border-radius: 10px; font-size: 10px; font-weight: 600;
+  white-space: nowrap; vertical-align: middle;
+}
+.portal-badge.qual { background: var(--green-bg); color: var(--green-primary); }
+.portal-badge.work { background: var(--yellow-bg); color: var(--yellow); }
+.portal-badge.junk { background: var(--bg); color: var(--text-muted); }
+
 /* --- Телефон ---------------------------------------------------------------
    Подрядчик смотрит кабинет с того же телефона, с которого обзванивает.
    Внутренние экраны приложения адаптива не имеют и не получают его здесь —
@@ -583,4 +629,9 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
      «тут есть ещё». Эти же чипы заодно работают сводкой «чем кончились
      заявки», так что места они стоят по делу. */
   .portal .filter-chip { padding: 5px 10px; font-size: 11px; }
+  /* Четыре исхода в ряд на 390 пикселях не помещаются, а в один столбец
+     занимают пол-экрана. Две колонки — компромисс, при котором числа
+     остаются крупными. */
+  .portal-outcomes { display: grid; grid-template-columns: repeat(2, 1fr); }
+  .portal-outcome { min-width: 0; }
 }

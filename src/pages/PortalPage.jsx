@@ -62,6 +62,20 @@ const C_QUALS = '#2F6B2A'
 // в таблице по источникам, где их видно точно.
 const PAGE_SIZE = 50
 
+// Три исхода, которыми живёт подрядчик. Порядок осмысленный: сначала то, что
+// ещё может стать результатом, потом результат, потом потери — так читается
+// как движение заявки, а не как случайный набор.
+const OUTCOMES = [
+  { id: 'в работе', label: 'В работе', cls: 'work',
+    hint: 'исход ещё не определён' },
+  { id: 'квал', label: 'Квал', cls: 'qual',
+    hint: 'работа принята' },
+  { id: 'брак', label: 'Брак', cls: 'junk',
+    hint: 'закрыты без результата' },
+]
+
+const OUTCOME_CLS = { 'квал': 'qual', 'в работе': 'work', 'брак': 'junk' }
+
 function Kpi({ label, value, sub, accent }) {
   return (
     <div className={`kpi-card ${accent || ''}`}>
@@ -106,6 +120,7 @@ export default function PortalPage() {
   // счётчики, таблицу и выгрузку. Выгрузка обязана отдавать ровно то, что
   // человек видит, — иначе он скачает файл и не найдёт в нём того, что
   // только что отфильтровал.
+  const [group, setGroup] = useState('all')
   const [stageFilter, setStageFilter] = useState(new Set())
   const [search, setSearch] = useState('')
   const [sortDesc, setSortDesc] = useState(true)
@@ -186,13 +201,30 @@ export default function PortalPage() {
   }, [daily])
 
   // --- Заявки периода --------------------------------------------------------
-  // Счётчики по стадиям считаются по ВСЕМ заявкам периода, а не по уже
-  // отфильтрованным: иначе, выбрав одну стадию, человек увидит нули у всех
-  // остальных и решит, что данные пропали.
+  // Стадия заявки — это четырнадцать значений, и подрядчику из такого списка
+  // не видно главного: за что ему засчитали, что ещё может засчитаться, а что
+  // отбраковано. Поэтому поверх стадий лежит исход из трёх значений, и
+  // разговор начинается с него.
+  //
+  // Группа приходит из базы (bfl_lead_stage_guide.outcome_group), а не
+  // вычисляется здесь по названию стадии: иначе справочник жил бы в двух
+  // местах и однажды разъехался бы.
+  const groupOf = l => l.outcome_group || 'в работе'
+
+  // Считаются по ВСЕМ заявкам периода, а не по отфильтрованным: иначе,
+  // выбрав одну группу, человек увидит нули у остальных и решит, что данные
+  // пропали.
+  const groupCounts = useMemo(() => {
+    const c = { 'квал': 0, 'в работе': 0, 'брак': 0 }
+    for (const l of leads) c[groupOf(l)] = (c[groupOf(l)] || 0) + 1
+    return c
+  }, [leads])
+
   const stageCounts = useMemo(() => {
     const m = new Map()
     for (const l of leads) {
-      const cur = m.get(l.stage) || { stage: l.stage, n: 0, qual: !!l.is_qual }
+      const cur = m.get(l.stage)
+        || { stage: l.stage, n: 0, qual: !!l.is_qual, group: groupOf(l) }
       cur.n += 1
       m.set(l.stage, cur)
     }
@@ -208,13 +240,14 @@ export default function PortalPage() {
     // системы, где он записан через скобки и дефисы, а у нас лежит иначе.
     const digits = q.replace(/\D/g, '')
     return leads.filter(l => {
+      if (group !== 'all' && groupOf(l) !== group) return false
       if (stageFilter.size && !stageFilter.has(l.stage)) return false
       if (!q) return true
       if (digits.length >= 3 && String(l.phone || '').replace(/\D/g, '').includes(digits)) return true
       return [l.utm, l.source_marker, l.stage]
         .some(v => String(v || '').toLowerCase().includes(q))
     })
-  }, [leads, stageFilter, search])
+  }, [leads, group, stageFilter, search])
 
   const sorted = useMemo(() => {
     const arr = [...filtered]
@@ -223,9 +256,19 @@ export default function PortalPage() {
   }, [filtered, sortDesc])
 
   const qualsInFiltered = useMemo(() => filtered.filter(l => l.is_qual).length, [filtered])
-  const filterOn = stageFilter.size > 0 || search.trim().length > 0
+  const filterOn = group !== 'all' || stageFilter.size > 0 || search.trim().length > 0
+
+  // Выбор группы сбрасывает отмеченные стадии, и наоборот. Иначе человек
+  // выбирает «Квал», потом щёлкает стадию из брака и получает пустой список
+  // без единой подсказки, почему.
+  function pickGroup(g) {
+    setGroup(prev => (prev === g ? 'all' : g))
+    setStageFilter(new Set())
+    setShown(PAGE_SIZE)
+  }
 
   function toggleStage(stage) {
+    setGroup('all')
     setStageFilter(prev => {
       const next = new Set(prev)
       if (next.has(stage)) next.delete(stage); else next.add(stage)
@@ -235,6 +278,7 @@ export default function PortalPage() {
   }
 
   function resetFilters() {
+    setGroup('all')
     setStageFilter(new Set())
     setSearch('')
     setShown(PAGE_SIZE)
@@ -251,8 +295,8 @@ export default function PortalPage() {
     downloadCsv(
       'pamyatka_po_stadiyam.csv',
       toCsv(
-        ['Стадия', 'Считается квалом', 'Что означает'],
-        guide.map(g => [g.status_name, g.is_qual ? 'да' : 'нет', g.description]),
+        ['Стадия', 'Результат', 'Что означает'],
+        guide.map(g => [g.status_name, g.outcome_group || '', g.description]),
       ),
     )
   }
@@ -533,28 +577,69 @@ export default function PortalPage() {
             <>
               <SectionTitle
                 title="Заявки периода"
-                note="Здесь другая логика дат, и это не ошибка: заявки, СОЗДАННЫЕ
-                      в выбранном периоде, со стадией НА СЕГОДНЯ. Блок выше отвечает
-                      на вопрос «сколько результата случилось за период», этот — «чем
-                      кончились заявки, сданные за период». Числа различаются, и оба
-                      верны."
+                note="Заявки, СОЗДАННЫЕ в выбранном периоде, со стадией на сегодня —
+                      поэтому числа тут не совпадают с блоком выше, и это не ошибка:
+                      там «сколько результата случилось за период», здесь «чем
+                      кончились заявки, сданные за период». Выберите исход или
+                      конкретную стадию — таблица и выгрузка подстроятся."
               />
 
               <div className="portal-filters">
-                <div className="portal-chips">
-                  {stageCounts.map(s => (
-                    <button
-                      key={s.stage}
-                      className={`filter-chip ${stageFilter.has(s.stage) ? 'active' : ''}`}
-                      onClick={() => toggleStage(s.stage)}
-                      title={`${((100 * s.n) / leads.length).toFixed(1)}% заявок периода`}
-                    >
-                      {s.qual && <span className="portal-qual-dot" />}
-                      {s.stage}
-                      <span className="portal-chip-count">{s.n}</span>
-                    </button>
-                  ))}
+                {/* Сначала исход, потом стадии. Подрядчик открывает кабинет с
+                    тремя вопросами — за что засчитали, что ещё в работе, что
+                    в браке, — и ответ на них должен стоять первым, а не
+                    собираться из четырнадцати стадий вручную. */}
+                <div className="portal-outcomes">
+                  <button
+                    className={`portal-outcome ${group === 'all' ? 'active' : ''}`}
+                    onClick={() => { setGroup('all'); setStageFilter(new Set()); setShown(PAGE_SIZE) }}
+                  >
+                    <span className="portal-outcome-n">{formatNum(leads.length)}</span>
+                    <span className="portal-outcome-label">Все заявки</span>
+                  </button>
+                  {OUTCOMES.map(o => {
+                    const n = groupCounts[o.id] || 0
+                    return (
+                      <button
+                        key={o.id}
+                        className={`portal-outcome ${o.cls} ${group === o.id ? 'active' : ''}`}
+                        onClick={() => pickGroup(o.id)}
+                      >
+                        <span className="portal-outcome-n">{formatNum(n)}</span>
+                        <span className="portal-outcome-label">{o.label}</span>
+                        <span className="portal-outcome-sub">
+                          {leads.length ? `${((100 * n) / leads.length).toFixed(0)}% · ` : ''}
+                          {o.hint}
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
+
+                {/* Стадии под своим исходом, а не одним списком: так видно,
+                    из чего сложилось каждое из трёх чисел выше. */}
+                {OUTCOMES.map(o => {
+                  const items = stageCounts.filter(s => s.group === o.id)
+                  if (!items.length) return null
+                  return (
+                    <div key={o.id} className="portal-stage-group">
+                      <div className={`portal-stage-group-title ${o.cls}`}>{o.label}</div>
+                      <div className="portal-chips">
+                        {items.map(s => (
+                          <button
+                            key={s.stage}
+                            className={`filter-chip ${stageFilter.has(s.stage) ? 'active' : ''}`}
+                            onClick={() => toggleStage(s.stage)}
+                            title={`${((100 * s.n) / leads.length).toFixed(1)}% заявок периода`}
+                          >
+                            {s.stage}
+                            <span className="portal-chip-count">{s.n}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
                 <div className="portal-filters-row">
                   <input
                     className="search-input"
@@ -587,7 +672,7 @@ export default function PortalPage() {
                   Памятка по стадиям
                 </button>
                 <span className="portal-muted">
-                  CSV для Excel · телефон, дата создания, стадия, UTM
+                  CSV для Excel · телефон, дата создания, стадия, результат, UTM
                   {filterOn && ' · с учётом фильтра'}
                 </span>
               </div>
@@ -629,7 +714,9 @@ export default function PortalPage() {
                               <td className="td-mono" style={{ whiteSpace: 'nowrap' }}>{l.phone || '—'}</td>
                               <td style={{ whiteSpace: 'nowrap' }}>{formatMoscow(l.created_at)}</td>
                               <td>
-                                {l.is_qual && <span className="portal-qual-dot" />}
+                                <span className={`portal-badge ${OUTCOME_CLS[groupOf(l)] || 'work'}`}>
+                                  {groupOf(l)}
+                                </span>
                                 {l.stage}
                               </td>
                               <td className="td-muted portal-utm" title={l.utm || ''}>{l.utm || '—'}</td>
@@ -669,7 +756,7 @@ export default function PortalPage() {
                   <thead>
                     <tr>
                       <th style={{ width: 230 }}>Стадия</th>
-                      <th style={{ width: 70, textAlign: 'center' }}>Квал</th>
+                      <th style={{ width: 110 }}>Результат</th>
                       <th>Что означает</th>
                     </tr>
                   </thead>
@@ -677,8 +764,10 @@ export default function PortalPage() {
                     {guide.map(g => (
                       <tr key={g.status_name}>
                         <td style={{ fontWeight: 600 }}>{g.status_name}</td>
-                        <td style={{ textAlign: 'center' }}>
-                          {g.is_qual && <span className="portal-qual-dot" />}
+                        <td>
+                          <span className={`portal-badge ${OUTCOME_CLS[g.outcome_group] || 'work'}`}>
+                            {g.outcome_group || 'в работе'}
+                          </span>
                         </td>
                         <td style={{ fontSize: 12, lineHeight: 1.55 }}>{g.description}</td>
                       </tr>

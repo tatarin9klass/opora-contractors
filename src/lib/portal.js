@@ -192,6 +192,9 @@ export const LEAD_EXPORT_HEADERS = [
   'Телефон',
   'Дата и время создания',
   'Стадия в воронке',
+  // Исход отдельной колонкой, чтобы в Excel можно было отфильтровать
+  // «засчитано» одним щелчком, не сверяясь с памяткой по каждой стадии.
+  'Результат',
   'Квал',
   'UTM',
   'utm_source',
@@ -207,6 +210,7 @@ export function leadExportRow(l) {
     l.phone || '',
     formatMoscow(l.created_at),
     l.stage || '',
+    l.outcome_group || '',
     l.is_qual ? 'да' : '',
     l.utm || '',
     l.utm_source || '',
