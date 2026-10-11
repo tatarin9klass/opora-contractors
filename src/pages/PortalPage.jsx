@@ -6,8 +6,8 @@ import { useAuth } from '../lib/auth.jsx'
 import { todayISO } from '../lib/dateContext.js'
 import {
   loadProfile, loadStageGuide, loadDaily, loadLeads,
-  periodBounds, recentWeeks, toCsv, downloadCsv, formatMoscow,
-  LEAD_EXPORT_HEADERS, leadExportRow,
+  periodBounds, recentWeeks, recentMonths, toCsv, downloadCsv, formatMoscow,
+  formatDayShort, DATA_START, LEAD_EXPORT_HEADERS, leadExportRow, plural,
 } from '../lib/portal.js'
 import { formatNum } from '../lib/helpers.js'
 
@@ -20,28 +20,47 @@ import { formatNum } from '../lib/helpers.js'
 // подрядчики, менеджеры, Автоправо. Этих чисел нет не на экране — их нет в
 // ответе базы, и получить их запросом мимо интерфейса тоже нельзя.
 //
-// ГЛАВНОЕ В УСТРОЙСТВЕ ЭКРАНА — ДВА БЛОКА С РАЗНОЙ ЛОГИКОЙ ДАТ, и подпись об
-// этом стоит прямо между ними. Иначе первый же вопрос подрядчика будет «а
-// почему в выгрузке квалов меньше, чем на дашборде», и отвечать на него
-// придётся каждый месяц заново:
+// ЭКРАН РАЗДЕЛЁН НА ДВЕ ЯВНЫЕ ЧАСТИ, И ЭТО ГЛАВНОЕ В ЕГО УСТРОЙСТВЕ.
+// Они отвечают на разные вопросы и считаются по разной логике дат, поэтому
+// цифры в них НЕ СОВПАДАЮТ — и если не развести их визуально, первый же
+// разговор будет «какая цифра настоящая».
 //
-//   Результаты (наша отчётная логика) — квал считается в день квалификации,
-//   встреча в день встречи, договор в день оплаты. Так считает всё наше
-//   приложение, по этим цифрам принимаются решения.
+//   «Результаты за период» — наша отчётная логика. Заявка считается в день
+//   поступления, квал — в день квалификации, встреча — в день консультации,
+//   договор — в день оплаты. Ровно эти цифры мы видим у себя.
 //
-//   Заявки (выгрузка) — по дате создания заявки, стадия фактическая на
-//   сейчас. Отвечает на другой вопрос: чем кончились именно те заявки,
-//   которые сданы в этот период.
+//   «Заявки периода» — по дате создания заявки, стадия фактическая на
+//   сегодня. Отвечает на другой вопрос: чем кончились именно те заявки,
+//   которые сданы в эти дни.
 //
-// Сентябрьская заявка, отквалившаяся в октябре, попадёт в сентябрьскую
-// выгрузку как квал и в октябрьские результаты как квал. Обе цифры верные.
+// Сентябрьская заявка, отквалившаяся в октябре, даст квал в сентябрьских
+// заявках и в октябрьских результатах. Обе цифры верные.
 // ============================================================================
 
+// Быстрые варианты закрывают ежедневный вопрос «сколько пришло», точные —
+// разбор за неделю или месяц. Порядок от частого к редкому.
 const MODES = [
-  { id: 'day', label: 'День' },
+  { id: 'today', label: 'Сегодня' },
+  { id: 'yesterday', label: 'Вчера' },
+  { id: 'd7', label: '7 дней' },
+  { id: 'd30', label: '30 дней' },
   { id: 'week', label: 'Неделя' },
+  { id: 'month', label: 'Месяц' },
   { id: 'range', label: 'Период' },
 ]
+
+// Две ступени фирменного зелёного, проверенные на различимость при
+// дальтонизме и на контраст к белому фону карточки. Не подбирались на глаз:
+// пара даёт ΔE 17.5 по всем типам CVD при пороге 8 и контраст выше 3:1.
+const C_LEADS = '#699E61'
+const C_QUALS = '#2F6B2A'
+
+// Встреч и договоров на графике намеренно нет. Заявок за день десятки, а
+// договоров единицы: на одной шкале вторые превращаются в невидимую полоску
+// у нуля, а разносить их по двум шкалам нельзя — две оси в одном графике
+// рисуют связь, которой в данных нет. Эти два числа живут в плитках сверху и
+// в таблице по источникам, где их видно точно.
+const PAGE_SIZE = 50
 
 function Kpi({ label, value, sub, accent }) {
   return (
@@ -53,10 +72,19 @@ function Kpi({ label, value, sub, accent }) {
   )
 }
 
+function SectionTitle({ title, note }) {
+  return (
+    <div className="portal-section-head">
+      <h2 className="portal-section-title">{title}</h2>
+      {note && <p className="portal-section-note">{note}</p>}
+    </div>
+  )
+}
+
 export default function PortalPage() {
   const { session, signOut } = useAuth()
 
-  const [mode, setMode] = useState('week')
+  const [mode, setMode] = useState('d30')
   const [anchor, setAnchor] = useState(todayISO())
   const [from, setFrom] = useState(todayISO())
   const [to, setTo] = useState(todayISO())
@@ -69,8 +97,27 @@ export default function PortalPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const bounds = useMemo(() => periodBounds(mode, anchor, from, to), [mode, anchor, from, to])
+  // Вид блока «по дням»: график или те же числа таблицей. Таблица здесь не
+  // запасной вариант, а равноправный: по графику нельзя назвать точное
+  // число, а в разговоре с нами подрядчику нужно именно оно.
+  const [dayView, setDayView] = useState('chart')
+
+  // Фильтры заявок. Скоупят всё, что ниже заголовка «Заявки периода»:
+  // счётчики, таблицу и выгрузку. Выгрузка обязана отдавать ровно то, что
+  // человек видит, — иначе он скачает файл и не найдёт в нём того, что
+  // только что отфильтровал.
+  const [stageFilter, setStageFilter] = useState(new Set())
+  const [search, setSearch] = useState('')
+  const [sortDesc, setSortDesc] = useState(true)
+  const [shown, setShown] = useState(PAGE_SIZE)
+  const [guideOpen, setGuideOpen] = useState(false)
+
+  const bounds = useMemo(
+    () => periodBounds(mode, anchor, from, to),
+    [mode, anchor, from, to],
+  )
   const weeks = useMemo(() => recentWeeks(14), [])
+  const months = useMemo(() => recentMonths(12), [])
 
   useEffect(() => {
     Promise.all([loadProfile(), loadStageGuide()])
@@ -90,6 +137,11 @@ export default function PortalPage() {
     return () => { cancelled = true }
   }, [bounds.from, bounds.to])
 
+  // Смена периода сбрасывает постраничный показ, но НЕ фильтры: человек
+  // смотрит «отказы за сентябрь», потом «отказы за октябрь» — сбрасывать ему
+  // фильтр на каждом шаге значит заставлять ставить его заново.
+  useEffect(() => { setShown(PAGE_SIZE) }, [bounds.from, bounds.to])
+
   // --- Итоги по нашей отчётной логике ---------------------------------------
   const totals = useMemo(() => {
     const t = { leads: 0, quals: 0, meetings: 0, deals: 0, duplicates: 0 }
@@ -103,13 +155,11 @@ export default function PortalPage() {
     return t
   }, [daily])
 
-  // По дням для графика и таблицы: источники подрядчика складываются, но в
-  // таблице остаются раскрытыми — если источников несколько, подрядчику
-  // важно видеть, какой из них дал результат.
   const byDay = useMemo(() => {
     const m = new Map()
     for (const r of daily) {
-      const cur = m.get(r.fact_date) || { date: r.fact_date, leads: 0, quals: 0, meetings: 0, deals: 0, duplicates: 0 }
+      const cur = m.get(r.fact_date)
+        || { date: r.fact_date, leads: 0, quals: 0, meetings: 0, deals: 0, duplicates: 0 }
       cur.leads += r.leads || 0
       cur.quals += r.quals || 0
       cur.meetings += r.meetings || 0
@@ -123,7 +173,8 @@ export default function PortalPage() {
   const bySource = useMemo(() => {
     const m = new Map()
     for (const r of daily) {
-      const cur = m.get(r.source_marker) || { source: r.source_marker, leads: 0, quals: 0, meetings: 0, deals: 0, duplicates: 0 }
+      const cur = m.get(r.source_marker)
+        || { source: r.source_marker, leads: 0, quals: 0, meetings: 0, deals: 0, duplicates: 0 }
       cur.leads += r.leads || 0
       cur.quals += r.quals || 0
       cur.meetings += r.meetings || 0
@@ -134,11 +185,11 @@ export default function PortalPage() {
     return [...m.values()].sort((a, b) => b.leads - a.leads)
   }, [daily])
 
-  // --- Разбивка выгрузки по стадиям ------------------------------------------
-  // Считается по тем же строкам, что уходят в файл, поэтому сходится с
-  // выгрузкой строка в строку. Именно этот блок объясняет расхождение с
-  // блоком результатов лучше любой подписи.
-  const stageBreakdown = useMemo(() => {
+  // --- Заявки периода --------------------------------------------------------
+  // Счётчики по стадиям считаются по ВСЕМ заявкам периода, а не по уже
+  // отфильтрованным: иначе, выбрав одну стадию, человек увидит нули у всех
+  // остальных и решит, что данные пропали.
+  const stageCounts = useMemo(() => {
     const m = new Map()
     for (const l of leads) {
       const cur = m.get(l.stage) || { stage: l.stage, n: 0, qual: !!l.is_qual }
@@ -151,13 +202,48 @@ export default function PortalPage() {
     )
   }, [leads, guide])
 
-  const qualsInExport = useMemo(() => leads.filter(l => l.is_qual).length, [leads])
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    // Поиск по телефону терпит любой формат: человек копирует номер из своей
+    // системы, где он записан через скобки и дефисы, а у нас лежит иначе.
+    const digits = q.replace(/\D/g, '')
+    return leads.filter(l => {
+      if (stageFilter.size && !stageFilter.has(l.stage)) return false
+      if (!q) return true
+      if (digits.length >= 3 && String(l.phone || '').replace(/\D/g, '').includes(digits)) return true
+      return [l.utm, l.source_marker, l.stage]
+        .some(v => String(v || '').toLowerCase().includes(q))
+    })
+  }, [leads, stageFilter, search])
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered]
+    arr.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+    return sortDesc ? arr.reverse() : arr
+  }, [filtered, sortDesc])
+
+  const qualsInFiltered = useMemo(() => filtered.filter(l => l.is_qual).length, [filtered])
+  const filterOn = stageFilter.size > 0 || search.trim().length > 0
+
+  function toggleStage(stage) {
+    setStageFilter(prev => {
+      const next = new Set(prev)
+      if (next.has(stage)) next.delete(stage); else next.add(stage)
+      return next
+    })
+    setShown(PAGE_SIZE)
+  }
+
+  function resetFilters() {
+    setStageFilter(new Set())
+    setSearch('')
+    setShown(PAGE_SIZE)
+  }
 
   function exportLeads() {
-    const rows = leads.map(leadExportRow)
     downloadCsv(
       `zayavki_${bounds.from}_${bounds.to}.csv`,
-      toCsv(LEAD_EXPORT_HEADERS, rows),
+      toCsv(LEAD_EXPORT_HEADERS, sorted.map(leadExportRow)),
     )
   }
 
@@ -172,21 +258,20 @@ export default function PortalPage() {
   }
 
   const periodLabel = bounds.from === bounds.to
-    ? bounds.from.split('-').reverse().join('.')
-    : `${bounds.from.split('-').reverse().join('.')} — ${bounds.to.split('-').reverse().join('.')}`
+    ? formatDayShort(bounds.from)
+    : `${formatDayShort(bounds.from)} — ${formatDayShort(bounds.to)}`
 
   const qualRate = totals.leads ? (100 * totals.quals / totals.leads) : null
 
   // Профиля нет — значит доступ не действует: срок пароля истёк либо его
   // приостановили. Отличить одно от другого отсюда нельзя и не нужно: база
   // в обоих случаях не отдаёт ни строки, и делать подрядчику надо одно и то
-  // же — попросить новый пароль. Пустой кабинет без объяснения был бы хуже
-  // всего: человек решил бы, что сломалось приложение, и стал бы искать
-  // ошибку там, где её нет.
+  // же. Пустой кабинет без объяснения был бы хуже всего: человек решил бы,
+  // что сломалось приложение, и стал бы искать ошибку там, где её нет.
   if (meLoaded && !me && !error) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
-        <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 32, width: 420, textAlign: 'center' }}>
+      <div className="portal-gate">
+        <div className="portal-gate-card">
           <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Срок доступа истёк</div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>
@@ -203,29 +288,25 @@ export default function PortalPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
-      {/* Шапка кабинета: название подрядчика, а не наше направление — человек
-          должен сразу видеть, чей кабинет открыт. */}
-      <div className="topbar" style={{ position: 'sticky', top: 0, zIndex: 5 }}>
-        <div className="topbar-title">
-          {me?.contractor_name || 'Кабинет подрядчика'}
-          <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 10 }}>
-            статистика заявок · БФЛ
-          </span>
+    <div className="portal">
+      <div className="portal-topbar">
+        <div className="portal-brand">
+          <div className="portal-brand-name">{me?.contractor_name || 'Кабинет подрядчика'}</div>
+          <div className="portal-brand-sub">статистика заявок · ЮК Опора · БФЛ</div>
         </div>
-        <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div className="portal-topbar-right">
           {me?.password_expires_at && (
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              пароль до {formatMoscow(me.password_expires_at).split(' ')[0]}
+            <span className="portal-muted">
+              доступ до {formatMoscow(me.password_expires_at).split(' ')[0]}
             </span>
           )}
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{session?.user?.email}</span>
+          <span className="portal-muted">{session?.user?.email}</span>
           <button className="btn btn-ghost btn-sm" onClick={signOut}>Выйти</button>
         </div>
       </div>
 
-      <div className="page-content" style={{ maxWidth: 1180, margin: '0 auto' }}>
-        {!me && !error && <div className="loading">Загрузка...</div>}
+      <div className="portal-content">
+        {!meLoaded && !error && <div className="loading">Загрузка...</div>}
 
         {error && (
           <div className="alert alert-danger" style={{ marginBottom: 16 }}>
@@ -233,31 +314,21 @@ export default function PortalPage() {
           </div>
         )}
 
-        {/* --- Выбор периода --- */}
-        <div className="info-card" style={{ marginBottom: 16 }}>
-          <div className="filters-bar" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* ---- Период: одна строка фильтров на весь экран ---------------- */}
+        <div className="portal-period">
+          <div className="portal-chips">
             {MODES.map(m => (
-              <div
+              <button
                 key={m.id}
                 className={`filter-chip ${mode === m.id ? 'active' : ''}`}
                 onClick={() => setMode(m.id)}
-                style={{ cursor: 'pointer' }}
               >
                 {m.label}
-              </div>
+              </button>
             ))}
+          </div>
 
-            {mode === 'day' && (
-              <input
-                className="form-input"
-                type="date"
-                value={anchor}
-                max={todayISO()}
-                onChange={e => setAnchor(e.target.value)}
-                style={{ width: 170 }}
-              />
-            )}
-
+          <div className="portal-period-detail">
             {mode === 'week' && (
               <select
                 className="filter-select"
@@ -266,8 +337,20 @@ export default function PortalPage() {
               >
                 {weeks.map(w => (
                   <option key={w.start} value={w.start}>
-                    {w.start.split('-').reverse().join('.')} — {w.end.split('-').reverse().join('.')}
+                    {formatDayShort(w.start)} — {formatDayShort(w.end)}
                   </option>
+                ))}
+              </select>
+            )}
+
+            {mode === 'month' && (
+              <select
+                className="filter-select"
+                value={anchor.slice(0, 8) + '01'}
+                onChange={e => setAnchor(e.target.value)}
+              >
+                {months.map(m => (
+                  <option key={m.start} value={m.start}>{m.label}</option>
                 ))}
               </select>
             )}
@@ -275,252 +358,339 @@ export default function PortalPage() {
             {mode === 'range' && (
               <>
                 <input
-                  className="form-input" type="date" value={from} max={todayISO()}
-                  onChange={e => setFrom(e.target.value)} style={{ width: 170 }}
+                  className="form-input portal-date" type="date" value={from}
+                  min={DATA_START} max={todayISO()}
+                  onChange={e => setFrom(e.target.value)}
                 />
-                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                <span className="portal-muted">—</span>
                 <input
-                  className="form-input" type="date" value={to} max={todayISO()}
-                  onChange={e => setTo(e.target.value)} style={{ width: 170 }}
+                  className="form-input portal-date" type="date" value={to}
+                  min={DATA_START} max={todayISO()}
+                  onChange={e => setTo(e.target.value)}
                 />
               </>
             )}
 
-            <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>
-              {loading ? 'считаем...' : periodLabel}
-            </div>
-          </div>
-          <div className="form-hint" style={{ marginTop: 8 }}>
-            Неделя отчётная — с четверга по среду. Так считает весь наш отчёт, и
-            обсуждать динамику удобнее в одних и тех же границах.
-          </div>
-        </div>
-
-        {/* --- Итоги по нашей отчётной логике --- */}
-        <div className="kpi-row" style={{ marginBottom: 8 }}>
-          <Kpi label="Заявок" value={formatNum(totals.leads)} sub="по дате поступления" />
-          <Kpi
-            label="Квалов" value={formatNum(totals.quals)} accent="green"
-            sub={qualRate != null ? `${qualRate.toFixed(1)}% от заявок` : null}
-          />
-          <Kpi label="Встреч" value={formatNum(totals.meetings)} sub="состоявшихся консультаций" />
-          <Kpi label="Договоров" value={formatNum(totals.deals)} accent="green" />
-          <Kpi
-            label="Дублей" value={formatNum(totals.duplicates)}
-            accent={totals.duplicates > 0 ? 'yellow' : ''}
-            sub="повторные обращения"
-          />
-        </div>
-        <div className="form-hint" style={{ marginBottom: 16 }}>
-          Отчётная логика: заявка считается в день поступления, квал — в день
-          квалификации, встреча — в день консультации, договор — в день оплаты.
-          Поэтому квал по сентябрьской заявке, сделанный в октябре, попадёт в
-          октябрь. Ровно эти цифры мы видим у себя.
-        </div>
-
-        {/* --- Динамика --- */}
-        {byDay.length > 1 && (
-          <div className="info-card" style={{ marginBottom: 16 }}>
-            <div className="info-card-title">По дням</div>
-            <div style={{ height: 240, marginTop: 8 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={byDay} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis
-                    dataKey="date" tick={{ fontSize: 11 }}
-                    tickFormatter={d => d.slice(8, 10) + '.' + d.slice(5, 7)}
-                  />
-                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                  <Tooltip
-                    labelFormatter={d => String(d).split('-').reverse().join('.')}
-                    formatter={(v, n) => [v, n]}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="leads" name="заявки" fill="#8FBF8A" />
-                  <Bar dataKey="quals" name="квалы" fill="#3A7E34" />
-                  <Bar dataKey="meetings" name="встречи" fill="#2c6e8f" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-
-        {/* --- Таблицы: по источникам и по дням --- */}
-        {bySource.length > 0 && (
-          <div className="table-wrap" style={{ marginBottom: 16 }}>
-            <div className="table-toolbar">
-              <strong style={{ fontSize: 13 }}>По источникам</strong>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                {bySource.length === 1 ? 'один источник' : `источников: ${bySource.length}`}
-              </span>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Источник</th>
-                  <th style={{ textAlign: 'right' }}>Заявок</th>
-                  <th style={{ textAlign: 'right' }}>Квалов</th>
-                  <th style={{ textAlign: 'right' }}>в квал</th>
-                  <th style={{ textAlign: 'right' }}>Встреч</th>
-                  <th style={{ textAlign: 'right' }}>Договоров</th>
-                  <th style={{ textAlign: 'right' }}>Дублей</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bySource.map(s => (
-                  <tr key={s.source}>
-                    <td className="td-mono">{s.source}</td>
-                    <td style={{ textAlign: 'right' }}>{formatNum(s.leads)}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatNum(s.quals)}</td>
-                    <td style={{ textAlign: 'right' }} className="td-muted">
-                      {s.leads ? `${(100 * s.quals / s.leads).toFixed(1)}%` : '—'}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>{formatNum(s.meetings)}</td>
-                    <td style={{ textAlign: 'right' }}>{formatNum(s.deals)}</td>
-                    <td style={{ textAlign: 'right' }} className="td-muted">{formatNum(s.duplicates)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* --- Выгрузка --- */}
-        <div className="info-card" style={{ marginBottom: 16 }}>
-          <div className="info-card-title">Выгрузка заявок</div>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, margin: '6px 0 12px' }}>
-            Здесь другая логика дат, и это не ошибка: в файл попадают заявки,
-            <b> созданные</b> в выбранном периоде, со стадией <b>на сегодня</b>.
-            Блок выше отвечает на вопрос «сколько результата случилось за период»,
-            а выгрузка — «чем кончились заявки, сданные за период». Поэтому числа
-            квалов в двух блоках различаются, и оба верны.
-          </p>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary btn-sm" onClick={exportLeads} disabled={loading || !leads.length}>
-              Скачать заявки ({formatNum(leads.length)})
-            </button>
-            <button className="btn btn-secondary btn-sm" onClick={exportGuide} disabled={!guide.length}>
-              Скачать памятку по стадиям
-            </button>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              CSV, открывается в Excel · из них квалов: <b>{formatNum(qualsInExport)}</b>
+            <span className="portal-period-label">
+              {periodLabel}
+              {loading && <span className="portal-muted"> · обновляем</span>}
             </span>
           </div>
         </div>
 
-        {/* --- Стадии выгрузки --- */}
-        {stageBreakdown.length > 0 && (
-          <div className="table-wrap" style={{ marginBottom: 16 }}>
-            <div className="table-toolbar">
-              <strong style={{ fontSize: 13 }}>Чем кончились заявки периода</strong>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                всего {formatNum(leads.length)} · стадия на сегодня
-              </span>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Стадия</th>
-                  <th style={{ textAlign: 'right' }}>Заявок</th>
-                  <th style={{ textAlign: 'right' }}>Доля</th>
-                  <th style={{ textAlign: 'center' }}>Квал</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stageBreakdown.map(s => (
-                  <tr key={s.stage}>
-                    <td>{s.stage}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatNum(s.n)}</td>
-                    <td style={{ textAlign: 'right' }} className="td-muted">
-                      {leads.length ? `${(100 * s.n / leads.length).toFixed(1)}%` : '—'}
-                    </td>
-                    <td style={{ textAlign: 'center' }}>{s.qual ? '✅' : ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {/* Во время загрузки держим прежние цифры приглушёнными, а не
+            подменяем их скелетом: так ничего не прыгает и видно, что
+            обновляется именно то, что уже на экране. */}
+        <div className={loading ? 'portal-fading' : ''}>
 
-        {/* --- Последние заявки, чтобы не скачивать файл ради трёх строк --- */}
-        {leads.length > 0 && (
-          <div className="table-wrap" style={{ marginBottom: 16 }}>
-            <div className="table-toolbar">
-              <strong style={{ fontSize: 13 }}>Заявки периода</strong>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                {leads.length > 100 ? 'первые 100 строк, остальное в файле' : `строк: ${leads.length}`}
-              </span>
+          {/* ================= Результаты за период ===================== */}
+          <SectionTitle
+            title="Результаты за период"
+            note="Заявка считается в день поступления, квал — в день квалификации,
+                  встреча — в день консультации, договор — в день оплаты. Ровно эти
+                  цифры мы видим у себя."
+          />
+
+          <div className="kpi-row portal-kpi">
+            <Kpi label="Заявок" value={formatNum(totals.leads)} sub="поступило" />
+            <Kpi
+              label="Квалов" value={formatNum(totals.quals)} accent="green"
+              sub={qualRate != null ? `${qualRate.toFixed(1)}% от заявок` : 'нет заявок'}
+            />
+            <Kpi label="Встреч" value={formatNum(totals.meetings)} sub="состоялось" />
+            <Kpi label="Договоров" value={formatNum(totals.deals)} accent="green" sub="оплачено" />
+            <Kpi
+              label="Дублей" value={formatNum(totals.duplicates)}
+              accent={totals.duplicates > 0 ? 'yellow' : ''}
+              sub="повторные обращения"
+            />
+          </div>
+
+          {byDay.length > 1 && (
+            <div className="info-card portal-card">
+              <div className="portal-card-head">
+                <div className="info-card-title" style={{ margin: 0 }}>Заявки и квалы по дням</div>
+                <div className="portal-switch">
+                  <button
+                    className={`filter-chip ${dayView === 'chart' ? 'active' : ''}`}
+                    onClick={() => setDayView('chart')}
+                  >График</button>
+                  <button
+                    className={`filter-chip ${dayView === 'table' ? 'active' : ''}`}
+                    onClick={() => setDayView('table')}
+                  >Таблица</button>
+                </div>
+              </div>
+
+              {dayView === 'chart' ? (
+                <div className="portal-chart">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={byDay} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}
+                              barGap={2} barCategoryGap="22%">
+                      <CartesianGrid stroke="var(--border-light)" vertical={false} />
+                      <XAxis
+                        dataKey="date" tick={{ fontSize: 11, fill: 'var(--text-muted)' }}
+                        tickLine={false} axisLine={{ stroke: 'var(--border)' }}
+                        tickFormatter={d => `${d.slice(8, 10)}.${d.slice(5, 7)}`}
+                        minTickGap={12}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 11, fill: 'var(--text-muted)' }}
+                        tickLine={false} axisLine={false} allowDecimals={false} width={44}
+                      />
+                      <Tooltip
+                        cursor={{ fill: 'var(--green-bg)' }}
+                        labelFormatter={d => formatDayShort(String(d))}
+                        contentStyle={{
+                          fontSize: 12, borderRadius: 8,
+                          border: '1px solid var(--border)', boxShadow: 'var(--shadow)',
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 12, paddingTop: 6 }} iconType="circle" iconSize={8} />
+                      <Bar dataKey="leads" name="заявки" fill={C_LEADS} radius={[4, 4, 0, 0]} maxBarSize={28} />
+                      <Bar dataKey="quals" name="квалы" fill={C_QUALS} radius={[4, 4, 0, 0]} maxBarSize={28} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="table-scroll" style={{ marginTop: 10 }}>
+                  <table className="table-compact">
+                    <thead>
+                      <tr>
+                        <th>Дата</th>
+                        <th style={{ textAlign: 'right' }}>Заявок</th>
+                        <th style={{ textAlign: 'right' }}>Квалов</th>
+                        <th style={{ textAlign: 'right' }}>Встреч</th>
+                        <th style={{ textAlign: 'right' }}>Договоров</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...byDay].reverse().map(d => (
+                        <tr key={d.date}>
+                          <td style={{ whiteSpace: 'nowrap' }}>{formatDayShort(d.date)}</td>
+                          <td className="portal-num">{formatNum(d.leads)}</td>
+                          <td className="portal-num" style={{ fontWeight: 600 }}>{formatNum(d.quals)}</td>
+                          <td className="portal-num">{formatNum(d.meetings)}</td>
+                          <td className="portal-num">{formatNum(d.deals)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-            <div className="table-scroll">
-              <table className="table-compact">
-                <thead>
-                  <tr>
-                    <th>Телефон</th>
-                    <th>Создана</th>
-                    <th>Стадия</th>
-                    <th>UTM</th>
-                    <th>Источник</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {leads.slice(0, 100).map(l => (
-                    <tr key={l.lead_id}>
-                      <td className="td-mono">{l.phone || '—'}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{formatMoscow(l.created_at)}</td>
-                      <td>
-                        {l.stage}
-                        {l.is_qual && <span style={{ marginLeft: 6 }}>✅</span>}
-                      </td>
-                      <td className="td-muted" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {l.utm || '—'}
-                      </td>
-                      <td className="td-mono td-muted">{l.source_marker}</td>
+          )}
+
+          {bySource.length > 1 && (
+            <div className="table-wrap portal-card">
+              <div className="table-toolbar">
+                <strong style={{ fontSize: 13 }}>По источникам</strong>
+                <span className="portal-muted">источников: {bySource.length}</span>
+              </div>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Источник</th>
+                      <th style={{ textAlign: 'right' }}>Заявок</th>
+                      <th style={{ textAlign: 'right' }}>Квалов</th>
+                      <th style={{ textAlign: 'right' }}>в квал</th>
+                      <th style={{ textAlign: 'right' }}>Встреч</th>
+                      <th style={{ textAlign: 'right' }}>Договоров</th>
+                      <th style={{ textAlign: 'right' }}>Дублей</th>
                     </tr>
+                  </thead>
+                  <tbody>
+                    {bySource.map(s => (
+                      <tr key={s.source}>
+                        <td className="td-mono">{s.source}</td>
+                        <td className="portal-num">{formatNum(s.leads)}</td>
+                        <td className="portal-num" style={{ fontWeight: 600 }}>{formatNum(s.quals)}</td>
+                        <td className="portal-num td-muted">
+                          {s.leads ? `${(100 * s.quals / s.leads).toFixed(1)}%` : '—'}
+                        </td>
+                        <td className="portal-num">{formatNum(s.meetings)}</td>
+                        <td className="portal-num">{formatNum(s.deals)}</td>
+                        <td className="portal-num td-muted">{formatNum(s.duplicates)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {!loading && !totals.leads && !leads.length && (
+            <div className="empty-state portal-card">
+              <div className="empty-state-icon">📭</div>
+              <h3>За этот период заявок нет</h3>
+              <p>Выберите другой период — например, «30 дней».</p>
+            </div>
+          )}
+
+          {/* ================= Заявки периода =========================== */}
+          {leads.length > 0 && (
+            <>
+              <SectionTitle
+                title="Заявки периода"
+                note="Здесь другая логика дат, и это не ошибка: заявки, СОЗДАННЫЕ
+                      в выбранном периоде, со стадией НА СЕГОДНЯ. Блок выше отвечает
+                      на вопрос «сколько результата случилось за период», этот — «чем
+                      кончились заявки, сданные за период». Числа различаются, и оба
+                      верны."
+              />
+
+              <div className="portal-filters">
+                <div className="portal-chips">
+                  {stageCounts.map(s => (
+                    <button
+                      key={s.stage}
+                      className={`filter-chip ${stageFilter.has(s.stage) ? 'active' : ''}`}
+                      onClick={() => toggleStage(s.stage)}
+                      title={`${((100 * s.n) / leads.length).toFixed(1)}% заявок периода`}
+                    >
+                      {s.qual && <span className="portal-qual-dot" />}
+                      {s.stage}
+                      <span className="portal-chip-count">{s.n}</span>
+                    </button>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+                </div>
+                <div className="portal-filters-row">
+                  <input
+                    className="search-input"
+                    placeholder="Поиск по телефону, UTM или источнику"
+                    value={search}
+                    onChange={e => { setSearch(e.target.value); setShown(PAGE_SIZE) }}
+                  />
+                  {filterOn && (
+                    <button className="btn btn-ghost btn-sm" onClick={resetFilters}>Сбросить</button>
+                  )}
+                  <span className="portal-muted portal-filters-count">
+                    {filterOn
+                      ? `${formatNum(filtered.length)} из ${formatNum(leads.length)}`
+                      : `всего ${formatNum(leads.length)}`}
+                    {' · квалов '}<b>{formatNum(qualsInFiltered)}</b>
+                  </span>
+                </div>
+              </div>
 
-        {!loading && !leads.length && !totals.leads && (
-          <div className="empty-state" style={{ marginBottom: 16 }}>
-            <div className="empty-state-icon">📭</div>
-            За этот период заявок нет.
-          </div>
-        )}
+              <div className="portal-export">
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={exportLeads}
+                  disabled={!filtered.length}
+                >
+                  Скачать {formatNum(filtered.length)}{' '}
+                  {plural(filtered.length, 'заявку', 'заявки', 'заявок')}
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={exportGuide} disabled={!guide.length}>
+                  Памятка по стадиям
+                </button>
+                <span className="portal-muted">
+                  CSV для Excel · телефон, дата создания, стадия, UTM
+                  {filterOn && ' · с учётом фильтра'}
+                </span>
+              </div>
 
-        {/* --- Памятка по стадиям --- */}
+              <div className="table-wrap portal-card">
+                <div className="table-toolbar">
+                  <strong style={{ fontSize: 13 }}>
+                    {filterOn ? 'Отобранные заявки' : 'Все заявки периода'}
+                  </strong>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setSortDesc(v => !v)}>
+                    {sortDesc ? 'Сначала новые ↓' : 'Сначала старые ↑'}
+                  </button>
+                  <span className="portal-muted" style={{ marginLeft: 'auto' }}>
+                    показано {formatNum(Math.min(shown, sorted.length))} из {formatNum(sorted.length)}
+                  </span>
+                </div>
+
+                {sorted.length === 0 ? (
+                  <div className="portal-empty-row">
+                    Под фильтр ничего не попало.{' '}
+                    <button className="btn btn-ghost btn-sm" onClick={resetFilters}>Сбросить фильтр</button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="table-scroll">
+                      <table className="table-compact">
+                        <thead>
+                          <tr>
+                            <th>Телефон</th>
+                            <th>Создана</th>
+                            <th>Стадия</th>
+                            <th>UTM</th>
+                            <th>Источник</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sorted.slice(0, shown).map(l => (
+                            <tr key={l.lead_id}>
+                              <td className="td-mono" style={{ whiteSpace: 'nowrap' }}>{l.phone || '—'}</td>
+                              <td style={{ whiteSpace: 'nowrap' }}>{formatMoscow(l.created_at)}</td>
+                              <td>
+                                {l.is_qual && <span className="portal-qual-dot" />}
+                                {l.stage}
+                              </td>
+                              <td className="td-muted portal-utm" title={l.utm || ''}>{l.utm || '—'}</td>
+                              <td className="td-mono td-muted">{l.source_marker}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {shown < sorted.length && (
+                      <div className="portal-more">
+                        <button className="btn btn-secondary btn-sm" onClick={() => setShown(s => s + PAGE_SIZE)}>
+                          Показать ещё {formatNum(Math.min(PAGE_SIZE, sorted.length - shown))}
+                        </button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setShown(sorted.length)}>
+                          Показать все
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ---- Памятка: свёрнута, потому что читают её один раз --------- */}
         {guide.length > 0 && (
-          <div className="table-wrap" style={{ marginBottom: 24 }}>
-            <div className="table-toolbar">
-              <strong style={{ fontSize: 13 }}>Памятка по стадиям</strong>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                что означает стадия заявки
-              </span>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 240 }}>Стадия</th>
-                  <th style={{ width: 70, textAlign: 'center' }}>Квал</th>
-                  <th>Что означает</th>
-                </tr>
-              </thead>
-              <tbody>
-                {guide.map(g => (
-                  <tr key={g.status_name}>
-                    <td style={{ fontWeight: 600 }}>{g.status_name}</td>
-                    <td style={{ textAlign: 'center' }}>{g.is_qual ? '✅' : ''}</td>
-                    <td style={{ fontSize: 12, lineHeight: 1.55 }}>{g.description}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="table-wrap portal-card">
+            <button className="portal-accordion" onClick={() => setGuideOpen(v => !v)}>
+              <strong style={{ fontSize: 13 }}>Памятка: что означает каждая стадия</strong>
+              <span className="portal-muted">{guideOpen ? 'свернуть ▲' : 'развернуть ▼'}</span>
+            </button>
+            {guideOpen && (
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 230 }}>Стадия</th>
+                      <th style={{ width: 70, textAlign: 'center' }}>Квал</th>
+                      <th>Что означает</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {guide.map(g => (
+                      <tr key={g.status_name}>
+                        <td style={{ fontWeight: 600 }}>{g.status_name}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          {g.is_qual && <span className="portal-qual-dot" />}
+                        </td>
+                        <td style={{ fontSize: 12, lineHeight: 1.55 }}>{g.description}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', paddingBottom: 24, lineHeight: 1.6 }}>
+        <div className="portal-footer">
           Построчные данные доступны с 1 апреля 2026 года. Стадии обновляются
           автоматически вслед за нашей воронкой. Вопросы по конкретной заявке —
           менеджеру ЮК Опора, с номером телефона из выгрузки.

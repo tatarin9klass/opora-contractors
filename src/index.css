@@ -427,3 +427,160 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
   color: var(--green-dark); border: 1px solid var(--border);
   margin: 2px;
 }
+
+/* ============================================================================
+   Кабинет подрядчика
+   
+   Отдельный блок, а не правки общих классов: кабинет открывает человек не из
+   нашей компании, нередко с телефона, и ломать ради него внутренние экраны
+   нельзя. Общие .btn, .filter-chip, .table-wrap переиспользуются как есть,
+   здесь только раскладка и то, чего в приложении не было.
+   ========================================================================= */
+
+.portal { min-height: 100vh; background: var(--bg); }
+
+.portal-topbar {
+  background: var(--white); border-bottom: 1px solid var(--border);
+  padding: 10px 24px; display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; position: sticky; top: 0; z-index: 10;
+}
+.portal-brand-name { font-size: 16px; font-weight: 700; color: var(--green-dark); line-height: 1.2; }
+.portal-brand-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.portal-topbar-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.portal-muted { font-size: 12px; color: var(--text-muted); }
+
+.portal-content { max-width: 1180px; margin: 0 auto; padding: 20px 24px 40px; }
+
+/* Заголовок раздела. Нужен потому, что на экране два блока с РАЗНОЙ логикой
+   дат, и без явного разделения их числа выглядят противоречащими друг другу. */
+.portal-section-head { margin: 26px 0 12px; }
+.portal-section-head:first-child { margin-top: 0; }
+.portal-section-title {
+  font-size: 15px; font-weight: 700; color: var(--green-dark);
+  letter-spacing: -0.2px;
+}
+.portal-section-note {
+  font-size: 12px; color: var(--text-muted); line-height: 1.6;
+  margin-top: 4px; max-width: 740px;
+}
+
+/* Строка периода — одна на весь экран, над всем, что она охватывает. */
+.portal-period {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 12px 14px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.portal-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.portal-period-detail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.portal-date { width: 160px; }
+.portal-period-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+
+/* Обновление данных: прежний рендер гаснет, но остаётся на месте. Скелет
+   вместо него дёргал бы раскладку на каждом переключении периода. */
+.portal-fading { opacity: 0.45; transition: opacity 0.15s; pointer-events: none; }
+
+.portal-card { margin-bottom: 16px; }
+.portal-kpi { flex-wrap: wrap; margin-bottom: 16px; }
+.portal-kpi .kpi-card { min-width: 150px; }
+
+.portal-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.portal-switch { display: flex; gap: 6px; }
+
+/* Высота с запасом под подписи оси и легенду: если задать её впритык к
+   области графика, карточка получает собственную полосу прокрутки. */
+.portal-chart { height: 280px; margin-top: 12px; }
+
+.portal-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Фильтры заявок. Отдельная строка над своим разделом, а не внутри таблицы:
+   они охватывают и счётчики, и таблицу, и выгрузку сразу. */
+.portal-filters {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 12px;
+}
+.portal-filters-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px;
+}
+.portal-filters-count { margin-left: auto; }
+.portal-chip-count {
+  display: inline-block; margin-left: 6px; padding: 0 5px;
+  border-radius: 8px; font-size: 11px; font-weight: 700;
+  background: var(--green-bg); color: var(--green-dark);
+}
+.filter-chip.active .portal-chip-count { background: rgba(255,255,255,0.22); color: #fff; }
+
+/* Отметка «стадия считается квалом». Точка, а не цвет текста: цветом тут
+   кодировать нельзя — он уже занят состоянием самого чипа. */
+.portal-qual-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green-primary); margin-right: 6px; vertical-align: middle;
+}
+.filter-chip.active .portal-qual-dot { background: #fff; }
+
+.portal-export {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
+}
+.portal-more {
+  display: flex; gap: 8px; justify-content: center;
+  padding: 12px; border-top: 1px solid var(--border-light);
+}
+.portal-empty-row { padding: 20px; font-size: 13px; color: var(--text-muted); text-align: center; }
+
+/* UTM бывает длиной в строку поиска — режем, полное значение в подсказке. */
+.portal-utm { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.portal-accordion {
+  width: 100%; background: none; border: none; text-align: left;
+  padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+}
+.portal-accordion:hover { background: var(--green-bg); }
+
+.portal-footer {
+  font-size: 11px; color: var(--text-muted); line-height: 1.6;
+  padding: 18px 2px 0; border-top: 1px solid var(--border-light); margin-top: 24px;
+}
+
+.portal-gate {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: var(--bg); padding: 20px;
+}
+.portal-gate-card {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 32px; max-width: 420px; text-align: center;
+}
+
+/* --- Телефон ---------------------------------------------------------------
+   Подрядчик смотрит кабинет с того же телефона, с которого обзванивает.
+   Внутренние экраны приложения адаптива не имеют и не получают его здесь —
+   правки намеренно ограничены классами .portal-*. */
+@media (max-width: 760px) {
+  .portal-topbar { padding: 10px 14px; align-items: flex-start; flex-direction: column; gap: 8px; }
+  .portal-topbar-right { gap: 10px; }
+  .portal-content { padding: 14px 14px 32px; }
+  .portal-period-detail { margin-left: 0; width: 100%; }
+  .portal-date { width: 100%; }
+  .portal-filters-count { margin-left: 0; width: 100%; }
+  .portal-kpi { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .portal-kpi .kpi-card { min-width: 0; padding: 12px 14px; }
+  .kpi-value { font-size: 22px; }
+  .portal-chart { height: 240px; }
+  .portal-utm { max-width: 150px; }
+  .portal-section-title { font-size: 14px; }
+  /* Таблицы здесь шире экрана по определению — пять колонок с телефоном,
+     датой и UTM. Без min-width браузер ужимает их в ширину экрана, и стадия
+     переносится в три строки, а UTM обрезается до «yandex…»: формально
+     помещается, прочитать нельзя. Прокрутка вбок честнее. */
+  .table-scroll { -webkit-overflow-scrolling: touch; }
+  .portal .table-scroll table { min-width: 660px; }
+
+  /* Чипы стадий не ограничиваем по высоте, хотя на узком экране их
+     четырнадцать штук в семь рядов. Пробовал прокрутку внутри блока —
+     нижний ряд срезается пополам и читается как поломка вёрстки, а не как
+     «тут есть ещё». Эти же чипы заодно работают сводкой «чем кончились
+     заявки», так что места они стоят по делу. */
+  .portal .filter-chip { padding: 5px 10px; font-size: 11px; }
+}

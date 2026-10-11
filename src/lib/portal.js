@@ -62,22 +62,49 @@ export async function loadLeads(fromISO, toISO) {
 }
 
 // --- Период ------------------------------------------------------------------
-// День, отчётная неделя (чт-ср, как во всём приложении) и произвольный период.
-// Неделя именно четверг-среда, а не календарная: подрядчик и мы должны
-// обсуждать одну и ту же неделю, иначе любой разговор о динамике разъезжается.
-export function periodBounds(mode, anchorISO, fromISO, toISO) {
-  if (mode === 'day') return { from: anchorISO, to: anchorISO }
-  if (mode === 'week') {
-    const thu = weekStartOf(anchorISO)
-    return { from: thu, to: addDaysISO(thu, 6) }
+// Быстрые варианты плюс точный выбор. Быстрые закрывают то, что спрашивают
+// каждый день («сколько пришло сегодня»), точные — разбор за конкретную
+// неделю или месяц.
+//
+// Неделя — отчётная, с четверга по среду, как во всём приложении. Не
+// календарная намеренно: подрядчик и мы должны обсуждать одну и ту же
+// неделю, иначе любой разговор о динамике разъезжается на три дня.
+export function periodBounds(mode, anchorISO, fromISO, toISO, today = todayISO()) {
+  switch (mode) {
+    case 'today':
+      return { from: today, to: today }
+    case 'yesterday': {
+      const y = addDaysISO(today, -1)
+      return { from: y, to: y }
+    }
+    case 'd7':
+      return { from: addDaysISO(today, -6), to: today }
+    case 'd30':
+      return { from: addDaysISO(today, -29), to: today }
+    case 'week': {
+      const thu = weekStartOf(anchorISO || today)
+      return { from: thu, to: addDaysISO(thu, 6) }
+    }
+    case 'month': {
+      const first = (anchorISO || today).slice(0, 8) + '01'
+      return { from: first, to: monthEndISO(first) }
+    }
+    default: {
+      const a = fromISO || today
+      const b = toISO || today
+      return a <= b ? { from: a, to: b } : { from: b, to: a }
+    }
   }
-  const a = fromISO || anchorISO
-  const b = toISO || anchorISO
-  return a <= b ? { from: a, to: b } : { from: b, to: a }
+}
+
+function monthEndISO(firstISO) {
+  const [y, m] = firstISO.split('-').map(Number)
+  const days = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  return `${firstISO.slice(0, 8)}${String(days).padStart(2, '0')}`
 }
 
 // Последние N отчётных недель, от текущей назад — для выпадающего списка.
-export function recentWeeks(count = 12, today = todayISO()) {
+export function recentWeeks(count = 14, today = todayISO()) {
   const out = []
   let thu = weekStartOf(today)
   for (let i = 0; i < count; i++) {
@@ -85,6 +112,35 @@ export function recentWeeks(count = 12, today = todayISO()) {
     thu = addDaysISO(thu, -7)
   }
   return out
+}
+
+const MONTH_NAMES = [
+  'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
+  'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь',
+]
+
+// Последние N месяцев. Глубже апреля 2026 не уходим: раньше построчной
+// истории в базе нет, и предлагать выбрать март значило бы обещать пустой
+// экран.
+export function recentMonths(count = 12, today = todayISO()) {
+  const out = []
+  let [y, m] = today.split('-').map(Number)
+  for (let i = 0; i < count; i++) {
+    const first = `${y}-${String(m).padStart(2, '0')}-01`
+    if (first < DATA_START.slice(0, 8) + '01') break
+    out.push({ start: first, label: `${MONTH_NAMES[m - 1]} ${y}` })
+    m -= 1
+    if (m === 0) { m = 12; y -= 1 }
+  }
+  return out
+}
+
+// С этой даты в базе лежат построчные данные по заявкам. Раньше — только
+// агрегаты, которых кабинету мало.
+export const DATA_START = '2026-04-01'
+
+export function formatDayShort(iso) {
+  return iso ? iso.split('-').reverse().join('.') : ''
 }
 
 // --- Выгрузка в файл ---------------------------------------------------------
@@ -160,4 +216,16 @@ export function leadExportRow(l) {
     l.utm_term || '',
     l.source_marker || '',
   ]
+}
+
+// Склонение числительных. «Скачать 34 заявок» на кнопке, которую подрядчик
+// видит каждый день, выглядит как недоделка — а правило простое и пишется
+// один раз.
+export function plural(n, one, few, many) {
+  const a = Math.abs(n) % 100
+  const b = a % 10
+  if (a > 10 && a < 20) return many
+  if (b > 1 && b < 5) return few
+  if (b === 1) return one
+  return many
 }
