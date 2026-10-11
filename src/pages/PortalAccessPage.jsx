@@ -137,6 +137,23 @@ export default function PortalAccessPage() {
     }
   }
 
+  // Исход и отметка «квал» — одно и то же утверждение, записанное дважды.
+  // Меняем их вместе, иначе в выгрузке и в кабинете они разойдутся.
+  async function saveGroup(statusName, group) {
+    setSaving(true)
+    const { error: e } = await supabase
+      .from('bfl_lead_stage_guide')
+      .update({ outcome_group: group, is_qual: group === 'квал' })
+      .eq('status_name', statusName)
+    setSaving(false)
+    if (e) { setError(e.message); return }
+    setGuide(prev => prev.map(g => (
+      g.status_name === statusName
+        ? { ...g, outcome_group: group, is_qual: group === 'квал' }
+        : g
+    )))
+  }
+
   async function saveDescription(statusName) {
     setSaving(true)
     const { error: e } = await supabase
@@ -314,14 +331,14 @@ export default function PortalAccessPage() {
         <div className="table-toolbar">
           <strong style={{ fontSize: 13 }}>Памятка по стадиям — то, что видит подрядчик</strong>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            формулировки можно править здесь, без миграции
+            исход и формулировки правятся здесь, без миграции
           </span>
         </div>
         <table>
           <thead>
             <tr>
-              <th style={{ width: 230 }}>Стадия</th>
-              <th style={{ width: 60, textAlign: 'center' }}>Квал</th>
+              <th style={{ width: 220 }}>Стадия</th>
+              <th style={{ width: 150 }}>Результат</th>
               <th>Что означает</th>
               <th style={{ width: 90 }} />
             </tr>
@@ -330,7 +347,25 @@ export default function PortalAccessPage() {
             {guide.map(g => (
               <tr key={g.status_name}>
                 <td style={{ fontWeight: 600 }}>{g.status_name}</td>
-                <td style={{ textAlign: 'center' }}>{g.is_qual ? '✅' : ''}</td>
+                {/* Группа правится здесь, а не миграцией: распределение стадий
+                    по исходам я задал по их названиям, и ошибиться в нём
+                    легко — «Звонок НЛ» и «Не удалось дозвониться» со стороны
+                    выглядят одинаково. Подрядчик при этом видит исход первым
+                    делом, поэтому цена ошибки высокая, а правка должна быть
+                    дешёвой. */}
+                <td>
+                  <select
+                    className="filter-select"
+                    value={g.outcome_group || 'в работе'}
+                    disabled={saving}
+                    onChange={e => saveGroup(g.status_name, e.target.value)}
+                    style={{ width: '100%' }}
+                  >
+                    <option value="в работе">в работе</option>
+                    <option value="квал">квал</option>
+                    <option value="брак">брак</option>
+                  </select>
+                </td>
                 <td style={{ fontSize: 12, lineHeight: 1.55 }}>
                   {editing === g.status_name ? (
                     <textarea

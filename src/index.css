@@ -560,8 +560,9 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 
    Цвет тут означает состояние, а не принадлежность, поэтому взяты статусные
    токены, а не серии графика: зелёный — принято, жёлтый — ещё решается,
-   серый — потери. Красный для брака сознательно не берётся: брак не вина
-   подрядчика по умолчанию, и кричать на него незачем. */
+   красный — брак. Красный по решению руководителя направления: брак для
+   подрядчика это деньги, за которые не заплатят, и смягчать его серым
+   незачем. */
 .portal-outcomes { display: flex; gap: 8px; flex-wrap: wrap; }
 .portal-outcome {
   flex: 1; min-width: 150px; text-align: left;
@@ -575,7 +576,7 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 .portal-outcome.active { background: var(--green-bg); border-color: var(--green-primary); }
 .portal-outcome.qual { border-left-color: var(--green-primary); }
 .portal-outcome.work { border-left-color: var(--yellow); }
-.portal-outcome.junk { border-left-color: var(--text-muted); }
+.portal-outcome.junk { border-left-color: var(--red); }
 .portal-outcome-n { font-size: 22px; font-weight: 700; line-height: 1.1; }
 .portal-outcome-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .portal-outcome-sub { font-size: 11px; color: var(--text-muted); }
@@ -587,6 +588,7 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 }
 .portal-stage-group-title.qual { color: var(--green-primary); }
 .portal-stage-group-title.work { color: var(--yellow); }
+.portal-stage-group-title.junk { color: var(--red); }
 
 /* Метка исхода в строке заявки и в памятке. Текстом, а не одним цветом:
    цвет здесь подсказка, а не единственный носитель смысла. */
@@ -597,7 +599,7 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 }
 .portal-badge.qual { background: var(--green-bg); color: var(--green-primary); }
 .portal-badge.work { background: var(--yellow-bg); color: var(--yellow); }
-.portal-badge.junk { background: var(--bg); color: var(--text-muted); }
+.portal-badge.junk { background: var(--red-bg); color: var(--red); }
 
 /* --- Телефон ---------------------------------------------------------------
    Подрядчик смотрит кабинет с того же телефона, с которого обзванивает.
