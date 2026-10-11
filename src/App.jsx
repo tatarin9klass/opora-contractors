@@ -16,7 +16,6 @@ import AvtpImportPage from './pages/AvtpImportPage.jsx'
 import ApExpensesPage from './pages/ApExpensesPage.jsx'
 import PortalPage from './pages/PortalPage.jsx'
 import PortalAccessPage from './pages/PortalAccessPage.jsx'
-import PasswordChangePage from './pages/PasswordChangePage.jsx'
 import { AuthProvider, useAuth } from './lib/auth.jsx'
 
 const PAGE_TITLES = {
@@ -46,7 +45,7 @@ const AVTP_PAGES = new Set(['channels', 'channel', 'apimport', 'apexpenses', 'ap
 const ADMIN_ONLY_PAGES = new Set(['import', 'expenses', 'apimport', 'apexpenses', 'access'])
 
 function AppShell() {
-  const { session, profile, isAdmin, isContractor, mustChangePassword, loading, signOut } = useAuth()
+  const { session, profile, isAdmin, isContractor, loading, signOut } = useAuth()
   const [direction, setDirectionState] = useState('bfl')
   const [page, setPage] = useState('dashboard')
   const [passportId, setPassportId] = useState(null)
@@ -92,11 +91,6 @@ function AppShell() {
       </div>
     )
   }
-
-  // Просроченный пароль: до смены не открываем ничего — ни кабинет, ни наши
-  // экраны. Запрет всё равно действует в базе (current_contractor_id не
-  // вернёт подрядчика), здесь только объяснение вместо пустого экрана.
-  if (mustChangePassword) return <PasswordChangePage />
 
   // Кабинет подрядчика — отдельное приложение в том же бандле: без меню, без
   // переключателя направлений, без единого нашего экрана. Разводка по роли

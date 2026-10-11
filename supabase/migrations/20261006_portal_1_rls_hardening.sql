@@ -117,6 +117,10 @@ comment on function is_staff() is
 -- ВАЖНО: просроченный пароль обрывает доступ ЗДЕСЬ, на уровне базы, а не на
 -- экране входа. Проверка в интерфейсе — это косметика: данные отдаёт база, и
 -- запрос к ней можно послать мимо интерфейса.
+--
+-- Пустой срок означает «пароль ещё не выдавали», и доступа при нём нет —
+-- иначе заведённый, но не выданный кабинет открылся бы сам по себе. Срок
+-- ставит выдача пароля, см. миграцию 20261006_portal_3_password_issue.
 create or replace function current_contractor_id()
 returns uuid
 language sql
@@ -130,7 +134,8 @@ as $$
     and p.role = 'contractor'
     and p.contractor_id is not null
     and p.must_change_password = false
-    and (p.password_expires_at is null or p.password_expires_at > now());
+    and p.password_expires_at is not null
+    and p.password_expires_at > now();
 $$;
 
 comment on function current_contractor_id() is
@@ -325,10 +330,6 @@ from pg_class c
 where c.relkind = 'r'
   and c.relnamespace = 'public'::regnamespace
   and c.relrowsecurity
-  -- Отпечатки паролей закрыты от всех СПЕЦИАЛЬНО: у таблицы включён RLS и ни
-  -- одной разрешающей политики, работают с ней только security definer
-  -- функции ротации. См. миграцию portal_password_rotation.
-  and c.relname <> 'contractor_password_state'
   and not exists (
     select 1 from pg_policies p
     where p.schemaname = 'public' and p.tablename = c.relname

@@ -16,10 +16,27 @@ import { formatMoscow } from '../lib/portal.js'
 // Через месяц никто не вспомнит, что это надо проверять, поэтому проверка
 // лежит на экране, а не в чьей-то памяти.
 //
-// ПАРОЛЕЙ ЗДЕСЬ НЕТ И БЫТЬ НЕ МОЖЕТ. Подрядчик задаёт пароль сам при первом
-// входе, раз в месяц его просят задать новый. Мы знаем только дату последней
-// смены.
+// ВЫДАЧА ПАРОЛЯ. Кнопка «Выдать пароль» просит Edge Function portal-access
+// сгенерировать пароль и задать его подрядчику служебным ключом. Ключ лежит
+// на сервере и в браузер не попадает — иначе он отдал бы всю базу целиком,
+// потому что обходит все запреты доступа. Функция перед выдачей проверяет, что
+// её вызвал admin, по его собственному токену.
+//
+// ПАРОЛЬ ПОКАЗЫВАЕТСЯ ОДИН РАЗ И НИГДЕ НЕ ХРАНИТСЯ. Потерялся — выдать новый,
+// это одна кнопка. Хранить его в базе значило бы отправлять пароли в каждую
+// резервную копию и в каждую выгрузку, не получая ничего взамен. В журнале
+// остаётся только факт выдачи: кто, кому, когда и до какого числа.
 // ============================================================================
+
+const ISSUE_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/portal-access'
+
+const STATE_COLOR = {
+  'действует': 'var(--green-dark)',
+  'истекает — пора выдать': 'var(--yellow)',
+  'просрочен — выдать новый': 'var(--red)',
+  'пароль не выдавали': 'var(--text-muted)',
+  'доступ приостановлен': 'var(--red)',
+}
 
 function Block({ title, hint, children }) {
   return (
@@ -46,9 +63,14 @@ export default function PortalAccessPage() {
   const [editing, setEditing] = useState(null)
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
+  const [issuingFor, setIssuingFor] = useState(null)
+  const [issued, setIssued] = useState(null)
+  const [copied, setCopied] = useState(false)
 
-  async function load() {
-    setLoading(true)
+  // silent — обновление после выдачи пароля: показывать «Загрузка...» на весь
+  // экран нельзя, иначе только что выданный пароль мигнёт и исчезнет.
+  async function load(silent = false) {
+    if (!silent) setLoading(true)
     setError('')
     try {
       const [a, c, g, au, sg] = await Promise.all([
@@ -62,11 +84,58 @@ export default function PortalAccessPage() {
     } catch (e) {
       setError(String(e?.message || e))
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
   useEffect(() => { load() }, [])
+
+  // Выдача пароля. Токен берётся из текущей сессии и уходит в функцию — она по
+  // нему и проверяет, что выдаёт именно админ. Анонимного ключа здесь
+  // недостаточно: по нему не видно, кто пришёл.
+  async function issuePassword(row) {
+    setIssuingFor(row.profile_id)
+    setError('')
+    setIssued(null)
+    setCopied(false)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Сессия истекла — войдите заново')
+
+      const res = await fetch(ISSUE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ profile_id: row.profile_id }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!json?.success) {
+        // Пароль может вернуться даже при ошибке — если он уже задан, а срок
+        // записать не удалось. Тогда его важно показать, а не потерять.
+        if (json?.password) setIssued({ ...json, email: row.email })
+        throw new Error(json?.error || `HTTP ${res.status}`)
+      }
+      setIssued({ ...json, email: row.email })
+      await load(true)
+    } catch (e) {
+      setError(String(e?.message || e))
+    } finally {
+      setIssuingFor(null)
+    }
+  }
+
+  async function copy(text) {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+    } catch {
+      // Буфер обмена недоступен (старый браузер, доступ без https) — пароль
+      // и так виден на экране, выделяется одним щелчком.
+      setCopied(false)
+    }
+  }
 
   async function saveDescription(statusName) {
     setSaving(true)
@@ -158,14 +227,44 @@ export default function PortalAccessPage() {
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             {access.length ? `подрядчиков с кабинетом: ${access.length}` : 'доступов пока нет'}
           </span>
-          <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={load}>Обновить</button>
+          <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => load()}>Обновить</button>
         </div>
+        {issued && (
+          <div style={{
+            margin: 16, padding: 16, borderRadius: 'var(--radius)',
+            background: 'var(--green-bg)', border: '1px solid var(--green-primary)',
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+              Пароль для {issued.email} — показывается один раз
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <code style={{
+                fontSize: 20, fontWeight: 700, letterSpacing: 1,
+                background: 'var(--white)', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)', padding: '8px 14px', userSelect: 'all',
+              }}>
+                {issued.password}
+              </code>
+              <button className="btn btn-secondary btn-sm" onClick={() => copy(issued.password)}>
+                {copied ? 'Скопировано' : 'Скопировать'}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setIssued(null)}>Скрыть</button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 10, lineHeight: 1.6 }}>
+              Действует до <b>{formatMoscow(issued.expires_at)}</b>. Передайте подрядчику
+              вместе со ссылкой на приложение. Нигде не сохранён — если потеряется,
+              просто выдайте новый.
+            </div>
+          </div>
+        )}
+
         {access.length === 0 ? (
           <div style={{ padding: 16, fontSize: 13, color: 'var(--text-muted)' }}>
-            Ни одного кабинета не выдано. Порядок выдачи — в комментарии к миграции{' '}
-            <span className="td-mono">20261006_portal_3_password_rotation.sql</span>: сначала
+            Ни одного кабинета не заведено. Порядок — в комментарии к миграции{' '}
+            <span className="td-mono">20261006_portal_3_password_issue.sql</span>: сначала
             пользователь в Supabase → Authentication, затем строка в profiles с ролью
-            contractor и привязкой к подрядчику.
+            contractor и привязкой к подрядчику. После этого здесь появится строка с
+            кнопкой выдачи.
           </div>
         ) : (
           <table>
@@ -174,24 +273,36 @@ export default function PortalAccessPage() {
                 <th>Подрядчик</th>
                 <th>Email</th>
                 <th>Состояние</th>
-                <th>Пароль сменён</th>
-                <th style={{ textAlign: 'right' }}>Дней осталось</th>
+                <th>Пароль выдан</th>
+                <th style={{ textAlign: 'right' }}>Осталось</th>
+                <th style={{ width: 150 }} />
               </tr>
             </thead>
             <tbody>
-              {access.map(r => (
-                <tr key={r.email}>
+              {/* Сортировка приходит из базы: сверху то, с чем надо что-то
+                  делать. Иначе на десятке подрядчиков просроченный теряется
+                  среди действующих. */}
+              {[...access].sort((a, b) => a.приоритет - b.приоритет).map(r => (
+                <tr key={r.profile_id}>
                   <td style={{ fontWeight: 600 }}>{r.подрядчик}</td>
                   <td className="td-mono">{r.email}</td>
-                  <td style={{
-                    fontSize: 12,
-                    color: r.состояние === 'доступ действует' ? 'var(--green-dark)' : 'var(--text-muted)',
-                  }}>
+                  <td style={{ fontSize: 12, color: STATE_COLOR[r.состояние] || 'var(--text-muted)' }}>
                     {r.состояние}
                   </td>
-                  <td className="td-muted">{r.пароль_сменён ? formatMoscow(r.пароль_сменён) : '—'}</td>
+                  <td className="td-muted">{r.выдан ? formatMoscow(r.выдан) : '—'}</td>
                   <td style={{ textAlign: 'right' }}>
-                    {r.действует_до ? r.дней_осталось : '—'}
+                    {r.дней_осталось == null ? '—' : `${r.дней_осталось} дн.`}
+                  </td>
+                  <td>
+                    <button
+                      className={`btn btn-sm ${r.приоритет <= 3 ? 'btn-primary' : 'btn-ghost'}`}
+                      disabled={issuingFor === r.profile_id}
+                      onClick={() => issuePassword(r)}
+                    >
+                      {issuingFor === r.profile_id
+                        ? 'Выдаём...'
+                        : r.выдан ? 'Выдать новый' : 'Выдать пароль'}
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -271,6 +382,15 @@ export default function PortalAccessPage() {
             Это не настройка интерфейса: у роли contractor нет прав ни на одну базовую
             таблицу, а вьюхи кабинета не содержат этих колонок в принципе. Запрос мимо
             приложения вернёт то же самое.
+          </div>
+          <div style={{ marginTop: 10 }}><b>Пароли:</b> выдаёте вы, кнопкой в таблице выше.
+            Пароль действует 31 день, после чего кабинет закрывается сам — подрядчик
+            увидит «срок доступа истёк» и придёт за новым. Сам сменить пароль он не
+            может: это выданный доступ, а не его личная учётная запись.</div>
+          <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+            Закрыть доступ немедленно, не дожидаясь срока и не удаляя кабинет:
+            <span className="td-mono"> update profiles set must_change_password = true
+            where email = '…';</span> — открыть обратно можно выдачей нового пароля.
           </div>
         </div>
       </div>

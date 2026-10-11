@@ -54,7 +54,7 @@ function Kpi({ label, value, sub, accent }) {
 }
 
 export default function PortalPage() {
-  const { session, signOut, profile } = useAuth()
+  const { session, signOut } = useAuth()
 
   const [mode, setMode] = useState('week')
   const [anchor, setAnchor] = useState(todayISO())
@@ -62,6 +62,7 @@ export default function PortalPage() {
   const [to, setTo] = useState(todayISO())
 
   const [me, setMe] = useState(null)
+  const [meLoaded, setMeLoaded] = useState(false)
   const [guide, setGuide] = useState([])
   const [daily, setDaily] = useState([])
   const [leads, setLeads] = useState([])
@@ -75,6 +76,7 @@ export default function PortalPage() {
     Promise.all([loadProfile(), loadStageGuide()])
       .then(([p, g]) => { setMe(p); setGuide(g) })
       .catch(e => setError(String(e?.message || e)))
+      .finally(() => setMeLoaded(true))
   }, [])
 
   useEffect(() => {
@@ -175,6 +177,31 @@ export default function PortalPage() {
 
   const qualRate = totals.leads ? (100 * totals.quals / totals.leads) : null
 
+  // Профиля нет — значит доступ не действует: срок пароля истёк либо его
+  // приостановили. Отличить одно от другого отсюда нельзя и не нужно: база
+  // в обоих случаях не отдаёт ни строки, и делать подрядчику надо одно и то
+  // же — попросить новый пароль. Пустой кабинет без объяснения был бы хуже
+  // всего: человек решил бы, что сломалось приложение, и стал бы искать
+  // ошибку там, где её нет.
+  if (meLoaded && !me && !error) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
+        <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 32, width: 420, textAlign: 'center' }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Срок доступа истёк</div>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            Пароль в кабинет действует месяц. Запросите новый у вашего менеджера
+            ЮК Опора — статистика откроется сразу после входа с ним.
+          </div>
+          <div style={{ marginTop: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{session?.user?.email}</span>
+            <button className="btn btn-secondary btn-sm" onClick={signOut}>Выйти</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
       {/* Шапка кабинета: название подрядчика, а не наше направление — человек
@@ -203,12 +230,6 @@ export default function PortalPage() {
         {error && (
           <div className="alert alert-danger" style={{ marginBottom: 16 }}>
             Не удалось загрузить данные: {error}
-          </div>
-        )}
-
-        {me === null && !error && profile?.role === 'contractor' && (
-          <div className="alert alert-warning" style={{ marginBottom: 16 }}>
-            Кабинет ещё не настроен до конца — обратитесь к менеджеру ЮК Опора.
           </div>
         )}
 
