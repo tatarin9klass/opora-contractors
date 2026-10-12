@@ -431,7 +431,7 @@ export default function PortalPage() {
           <SectionTitle
             title="Результаты за период"
             note="Заявка считается в день поступления, квал — в день квалификации,
-                  встреча — в день консультации, договор — в день оплаты. Ровно эти
+                  встреча — в день консультации, договор — в день оплаты клиентом. Ровно эти
                   цифры мы видим у себя."
           />
 
@@ -442,7 +442,7 @@ export default function PortalPage() {
               sub={qualRate != null ? `${qualRate.toFixed(1)}% от заявок` : 'нет заявок'}
             />
             <Kpi label="Встреч" value={formatNum(totals.meetings)} sub="состоялось" />
-            <Kpi label="Договоров" value={formatNum(totals.deals)} accent="green" sub="оплачено" />
+            <Kpi label="Договоров" value={formatNum(totals.deals)} accent="green" sub="клиент оплатил" />
             <Kpi
               label="Дублей" value={formatNum(totals.duplicates)}
               accent={totals.duplicates > 0 ? 'yellow' : ''}
