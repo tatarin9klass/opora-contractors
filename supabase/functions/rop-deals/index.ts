@@ -65,8 +65,13 @@ async function bitrix(method: string, params: Record<string, unknown>, attempt =
     }
     return json;
   } catch (err) {
-    const isBitrixError = String(err).startsWith("Error: Bitrix [");
-    if (isBitrixError || attempt >= MAX_ATTEMPTS) throw err;
+    const text = String(err);
+    const isBitrixError = text.startsWith("Error: Bitrix [");
+    // «Internal server error» и ограничение частоты — временные: Битрикс
+    // отвечает так под нагрузкой, через секунду тот же запрос проходит.
+    // Остальные его ошибки (нет прав, неверный метод) повторять незачем.
+    const isTemporary = /internal server error|query limit|overload|too many/i.test(text);
+    if ((isBitrixError && !isTemporary) || attempt >= MAX_ATTEMPTS) throw err;
     // 0,5 · 1 · 2 секунды — достаточно, чтобы пережить обрыв, и достаточно
     // мало, чтобы не съесть бюджет времени прохода.
     await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
@@ -88,14 +93,41 @@ function num(raw: unknown): number | null {
 
 // Названия стадий воронки. Берём из Битрикса, а не держим списком: стадии
 // переименовывают, и захардкоженный список разъедется молча.
-async function stageNames(): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  const json = await bitrix("crm.status.list", {
-    filter: { ENTITY_ID: `DEAL_STAGE_${CATEGORY_ID}` },
-    select: ["STATUS_ID", "NAME"],
-  });
-  for (const s of json.result || []) map.set(String(s.STATUS_ID), s.NAME);
-  return map;
+// Справочник стадий. Запрашивается раз в сутки и кладётся в состояние
+// импорта: он меняется редко, а дёргать его в начале каждого прохода —
+// значит ставить весь импорт в зависимость от одного необязательного
+// запроса. Именно на нём импорт и встал: Битрикс ответил «Internal server
+// error», и проход упал, не начавшись.
+async function stageNames(supabase: any, state: Record<string, string>): Promise<Map<string, string>> {
+  const cachedAt = Number(state.stages_dict_at || 0);
+  const fresh = Date.now() - cachedAt < 24 * 3600 * 1000;
+  if (fresh && state.stages_dict) {
+    try {
+      return new Map(Object.entries(JSON.parse(state.stages_dict)));
+    } catch { /* испорченный кэш — просто перезапросим */ }
+  }
+
+  try {
+    const map = new Map<string, string>();
+    const json = await bitrix("crm.status.list", {
+      filter: { ENTITY_ID: `DEAL_STAGE_${CATEGORY_ID}` },
+      select: ["STATUS_ID", "NAME"],
+    });
+    for (const s of json.result || []) map.set(String(s.STATUS_ID), s.NAME);
+    await writeState(supabase, {
+      stages_dict: JSON.stringify(Object.fromEntries(map)),
+      stages_dict_at: String(Date.now()),
+    });
+    return map;
+  } catch (e) {
+    // Не смогли обновить — работаем на прежнем справочнике. Названия стадий
+    // нужны для удобства чтения, а не для расчётов: те идут по stage_id.
+    console.error("crm.status.list недоступен, беру сохранённый справочник:", String(e));
+    if (state.stages_dict) {
+      try { return new Map(Object.entries(JSON.parse(state.stages_dict))); } catch { /* пусто */ }
+    }
+    return new Map<string, string>();
+  }
 }
 
 async function userNames(ids: number[]): Promise<Map<string, string>> {
@@ -120,29 +152,58 @@ async function userNames(ids: number[]): Promise<Map<string, string>> {
 // Справочник источников лидов. Тянется один раз за вызов функции: он на
 // полторы сотни строк и на каждой странице сделок заново не нужен.
 let SOURCE_CACHE: Map<string, string> | null = null;
-async function sourceDict(): Promise<Map<string, string>> {
+async function sourceDict(supabase: any, state: Record<string, string>): Promise<Map<string, string>> {
   if (SOURCE_CACHE) return SOURCE_CACHE;
-  const src = new Map<string, string>();
-  let start = 0;
-  while (true) {
-    const json = await bitrix("crm.status.list", {
-      filter: { ENTITY_ID: "SOURCE" },
-      select: ["STATUS_ID", "NAME"],
-      start,
-    });
-    for (const s of json.result || []) src.set(String(s.STATUS_ID), s.NAME);
-    if (!json.next) break;
-    start = json.next;
+
+  // Тот же приём, что и со стадиями: справочник источников живёт в
+  // состоянии импорта сутки. Он на полторы сотни строк, меняется редко, а
+  // на каждом проходе ставит фазу сделок в зависимость от одного запроса,
+  // который Битрикс периодически отдаёт с ошибкой.
+  const cachedAt = Number(state.sources_dict_at || 0);
+  if (Date.now() - cachedAt < 24 * 3600 * 1000 && state.sources_dict) {
+    try {
+      SOURCE_CACHE = new Map(Object.entries(JSON.parse(state.sources_dict)));
+      return SOURCE_CACHE;
+    } catch { /* испорченный кэш — перезапросим */ }
   }
-  SOURCE_CACHE = src;
-  return src;
+
+  try {
+    const src = new Map<string, string>();
+    let start = 0;
+    while (true) {
+      const json = await bitrix("crm.status.list", {
+        filter: { ENTITY_ID: "SOURCE" },
+        select: ["STATUS_ID", "NAME"],
+        start,
+      });
+      for (const s of json.result || []) src.set(String(s.STATUS_ID), s.NAME);
+      if (!json.next) break;
+      start = json.next;
+    }
+    await writeState(supabase, {
+      sources_dict: JSON.stringify(Object.fromEntries(src)),
+      sources_dict_at: String(Date.now()),
+    });
+    SOURCE_CACHE = src;
+    return src;
+  } catch (e) {
+    console.error("справочник источников недоступен, беру сохранённый:", String(e));
+    if (state.sources_dict) {
+      try {
+        SOURCE_CACHE = new Map(Object.entries(JSON.parse(state.sources_dict)));
+        return SOURCE_CACHE;
+      } catch { /* пусто */ }
+    }
+    SOURCE_CACHE = new Map<string, string>();
+    return SOURCE_CACHE;
+  }
 }
 
-async function leadSources(leadIds: number[]): Promise<Map<number, string>> {
+async function leadSources(supabase: any, state: Record<string, string>, leadIds: number[]): Promise<Map<number, string>> {
   const out = new Map<number, string>();
   const ids = [...new Set(leadIds.filter(Boolean))];
   if (!ids.length) return out;
-  const src = await sourceDict();
+  const src = await sourceDict(supabase, state);
 
   for (let i = 0; i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50);
@@ -218,7 +279,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const stages = await stageNames();
+    const stages = await stageNames(supabase, state);
     let dealsUpserted = 0, productsUpserted = 0, stagesUpserted = 0;
     let done = false;
 
@@ -245,8 +306,8 @@ Deno.serve(async (req) => {
       }
 
       const users = await userNames(page.map((d) => Number(d.ASSIGNED_BY_ID)));
-      const srcByLead = await leadSources(page.map((d) => Number(d.LEAD_ID)));
-      const srcDict = await sourceDict();
+      const srcByLead = await leadSources(supabase, state, page.map((d) => Number(d.LEAD_ID)));
+      const srcDict = await sourceDict(supabase, state);
 
       // Источник: сперва из лида-родителя — так считает весь остальной учёт
       // направления. Если лида нет, берём собственное поле сделки: сделок
