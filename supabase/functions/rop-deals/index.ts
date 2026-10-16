@@ -229,8 +229,29 @@ Deno.serve(async (req) => {
 
       const users = await userNames(page.map((d) => Number(d.ASSIGNED_BY_ID)));
       const srcByLead = await leadSources(page.map((d) => Number(d.LEAD_ID)));
+      const srcDict = await sourceDict();
 
-      const rows = page.map((d) => ({
+      // Источник: сперва из лида-родителя — так считает весь остальной учёт
+      // направления. Если лида нет, берём собственное поле сделки: сделок
+      // без источника в компании не бывает, и пустая колонка означала бы
+      // не отсутствие данных, а то, что мы не там посмотрели.
+      const sourceOf = (d: any): { name: string | null; id: string | null; from: string | null } => {
+        const leadId = Number(d.LEAD_ID);
+        const fromLead = leadId ? srcByLead.get(leadId) : undefined;
+        if (fromLead) return { name: fromLead, id: String(d.SOURCE_ID ?? ""), from: "лид" };
+        const ownId = d.SOURCE_ID ? String(d.SOURCE_ID) : null;
+        if (ownId) {
+          // Названия может не быть в справочнике — встречаются значения,
+          // которых там нет (похоже, из коллтрекинга). Тогда пишем сам
+          // идентификатор: лучше неудобное имя, чем пустота.
+          return { name: srcDict.get(ownId) ?? `id ${ownId}`, id: ownId, from: "сделка" };
+        }
+        return { name: null, id: null, from: null };
+      };
+
+      const rows = page.map((d) => {
+        const src = sourceOf(d);
+        return {
         deal_id: Number(d.ID),
         title: d.TITLE ?? null,
         category_id: Number(d.CATEGORY_ID ?? CATEGORY_ID),
@@ -240,12 +261,15 @@ Deno.serve(async (req) => {
         assigned_by_id: d.ASSIGNED_BY_ID ? Number(d.ASSIGNED_BY_ID) : null,
         assigned_by_name: users.get(String(d.ASSIGNED_BY_ID || "")) ?? null,
         lead_id: d.LEAD_ID ? Number(d.LEAD_ID) : null,
-        source_name: srcByLead.get(Number(d.LEAD_ID)) ?? null,
+        source_name: src.name,
+        source_id: src.id,
+        source_from: src.from,
         date_create: toIso(d.DATE_CREATE),
         closedate: toIso(d.CLOSEDATE),
         moved_time: toIso(d.MOVED_TIME),
         synced_at: new Date().toISOString(),
-      }));
+        };
+      });
 
       await upsertChunked(supabase, "rop_deals", rows, "deal_id");
       dealsUpserted += rows.length;
