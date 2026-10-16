@@ -44,17 +44,34 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-async function bitrix(method: string, params: Record<string, unknown>) {
-  const res = await fetch(`${BITRIX_WEBHOOK}/${method}.json`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
-  const json = await res.json();
-  if (json.error) {
-    throw new Error(`Bitrix [${method}]: ${json.error_description || json.error}`);
+// Повторы обязательны, а не предосторожность. Связь между Supabase и
+// Битриксом рвётся регулярно — наблюдали «http2 error: connection error»
+// посреди прохода. Один такой разрыв без повторов роняет весь проход, и
+// полторы минуты работы уходят впустую.
+//
+// Повторяем только сетевые сбои. Ошибку самого Битрикса (нет прав, неверный
+// метод) повторять бессмысленно: она не исчезнет, а время съест.
+async function bitrix(method: string, params: Record<string, unknown>, attempt = 1): Promise<any> {
+  const MAX_ATTEMPTS = 4;
+  try {
+    const res = await fetch(`${BITRIX_WEBHOOK}/${method}.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    const json = await res.json();
+    if (json.error) {
+      throw new Error(`Bitrix [${method}]: ${json.error_description || json.error}`);
+    }
+    return json;
+  } catch (err) {
+    const isBitrixError = String(err).startsWith("Error: Bitrix [");
+    if (isBitrixError || attempt >= MAX_ATTEMPTS) throw err;
+    // 0,5 · 1 · 2 секунды — достаточно, чтобы пережить обрыв, и достаточно
+    // мало, чтобы не съесть бюджет времени прохода.
+    await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+    return bitrix(method, params, attempt + 1);
   }
-  return json;
 }
 
 function toIso(raw: unknown): string | null {
