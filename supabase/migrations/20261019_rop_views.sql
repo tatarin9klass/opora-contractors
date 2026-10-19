@@ -28,7 +28,12 @@
 -- что до оформления доходит меньшая часть, и средний чек считается по ним.
 -- ============================================================================
 drop view if exists rop_deal_money cascade;
-create view rop_deal_money with (security_invoker = true) as
+-- ВАЖНО, ЕСЛИ ПЕРЕСОЗДАЁШЬ ЭТУ ВИТРИНУ. Она намеренно работает с правами
+-- владельца и отобрана у клиентских ролей: кабинет РОПа читает её через
+-- обёртки rop_portal_*, а роли rop на базовых таблицах доступа нет. Вернёшь
+-- security_invoker — кабинет снова покажет нули. Разбор в миграции
+-- 20261019_rop_portal_chain.sql.
+create view rop_deal_money as
 select
   p.deal_id,
   sum(p.total) filter (where rop_product_group(p.product_name) <> 'ФПА') as чек,
@@ -49,7 +54,12 @@ group by p.deal_id;
 -- рекомендаций» работал на любом показателе одинаково.
 -- ============================================================================
 drop view if exists rop_events cascade;
-create view rop_events with (security_invoker = true) as
+-- ВАЖНО, ЕСЛИ ПЕРЕСОЗДАЁШЬ ЭТУ ВИТРИНУ. Она намеренно работает с правами
+-- владельца и отобрана у клиентских ролей: кабинет РОПа читает её через
+-- обёртки rop_portal_*, а роли rop на базовых таблицах доступа нет. Вернёшь
+-- security_invoker — кабинет снова покажет нули. Разбор в миграции
+-- 20261019_rop_portal_chain.sql.
+create view rop_events as
 select
   s.deal_id,
   s.stage_id,
@@ -79,7 +89,12 @@ where s.stage_id like 'C34:%';
 -- РОП прочитает ноль как провал отдела.
 -- ============================================================================
 drop view if exists rop_stage_since;
-create view rop_stage_since with (security_invoker = true) as
+-- ВАЖНО, ЕСЛИ ПЕРЕСОЗДАЁШЬ ЭТУ ВИТРИНУ. Она намеренно работает с правами
+-- владельца и отобрана у клиентских ролей: кабинет РОПа читает её через
+-- обёртки rop_portal_*, а роли rop на базовых таблицах доступа нет. Вернёшь
+-- security_invoker — кабинет снова покажет нули. Разбор в миграции
+-- 20261019_rop_portal_chain.sql.
+create view rop_stage_since as
 select
   stage_id,
   max(stage_name) as стадия,
@@ -101,7 +116,12 @@ group by stage_id;
 -- дальше от правды, чем неравномернее дни.
 -- ============================================================================
 drop view if exists rop_daily;
-create view rop_daily with (security_invoker = true) as
+-- ВАЖНО, ЕСЛИ ПЕРЕСОЗДАЁШЬ ЭТУ ВИТРИНУ. Она намеренно работает с правами
+-- владельца и отобрана у клиентских ролей: кабинет РОПа читает её через
+-- обёртки rop_portal_*, а роли rop на базовых таблицах доступа нет. Вернёшь
+-- security_invoker — кабинет снова покажет нули. Разбор в миграции
+-- 20261019_rop_portal_chain.sql.
+create view rop_daily as
 select
   e.дата,
   e.группа,
@@ -125,7 +145,12 @@ group by e.дата, e.группа;
 -- Дневная витрина по менеджерам
 -- ============================================================================
 drop view if exists rop_daily_manager;
-create view rop_daily_manager with (security_invoker = true) as
+-- ВАЖНО, ЕСЛИ ПЕРЕСОЗДАЁШЬ ЭТУ ВИТРИНУ. Она намеренно работает с правами
+-- владельца и отобрана у клиентских ролей: кабинет РОПа читает её через
+-- обёртки rop_portal_*, а роли rop на базовых таблицах доступа нет. Вернёшь
+-- security_invoker — кабинет снова покажет нули. Разбор в миграции
+-- 20261019_rop_portal_chain.sql.
+create view rop_daily_manager as
 select
   e.дата,
   e.менеджер,
@@ -193,3 +218,21 @@ from rop_deals d
 full join rop_managers m on m.manager_name = d.assigned_by_name
 group by 1, 2
 order by сделок desc;
+
+-- ============================================================================
+-- Внутренние витрины — прочь от клиентов
+--
+-- Они работают с правами владельца (см. комментарии выше), поэтому выдать их
+-- роли authenticated значило бы отдать показатели отдела любому
+-- залогиненному, включая подрядчиков. Читать их должны только обёртки
+-- rop_portal_*, а те спрашивают rop_can_read().
+-- ============================================================================
+do $$
+declare v text;
+begin
+  foreach v in array array['rop_deal_money', 'rop_events', 'rop_stage_since', 'rop_daily', 'rop_daily_manager'] loop
+    if to_regclass('public.' || v) is not null then
+      execute format('revoke all on %I from anon, authenticated', v);
+    end if;
+  end loop;
+end $$;
