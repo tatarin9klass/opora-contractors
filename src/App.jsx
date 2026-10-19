@@ -16,6 +16,7 @@ import AvtpImportPage from './pages/AvtpImportPage.jsx'
 import ApExpensesPage from './pages/ApExpensesPage.jsx'
 import PortalPage from './pages/PortalPage.jsx'
 import PortalAccessPage from './pages/PortalAccessPage.jsx'
+import RopPage from './pages/RopPage.jsx'
 import { AuthProvider, useAuth } from './lib/auth.jsx'
 
 const PAGE_TITLES = {
@@ -31,6 +32,7 @@ const PAGE_TITLES = {
   apexpenses: 'Ввод расходов — Автоправо',
   apattr: 'Сверка источников — Автоправо',
   access: 'Доступы подрядчиков',
+  rop: 'Отдел продаж',
 }
 
 // Стартовый раздел каждого направления. Приложение всегда открывается на БФЛ.
@@ -45,7 +47,7 @@ const AVTP_PAGES = new Set(['channels', 'channel', 'apimport', 'apexpenses', 'ap
 const ADMIN_ONLY_PAGES = new Set(['import', 'expenses', 'apimport', 'apexpenses', 'access'])
 
 function AppShell() {
-  const { session, profile, isAdmin, isContractor, loading, signOut } = useAuth()
+  const { session, profile, isAdmin, isContractor, isRop, loading, signOut } = useAuth()
   const [direction, setDirectionState] = useState('bfl')
   const [page, setPage] = useState('dashboard')
   const [passportId, setPassportId] = useState(null)
@@ -98,6 +100,11 @@ function AppShell() {
   // подрядчик мог бы оказаться на нашем экране.
   if (isContractor) return <PortalPage />
 
+  // Кабинет РОПа — ровно по той же причине и на том же месте: показатели
+  // своего отдела и ничего больше. Планы он видит, но не правит, поэтому
+  // вкладка ввода планов ему не передаётся.
+  if (isRop) return <RopPage standalone isAdmin={false} />
+
   const safePage = !isAdmin && ADMIN_ONLY_PAGES.has(page) ? (HOME_PAGE[direction] || 'dashboard') : page
   // Направление считаем по самому разделу, а не по стейту — так подсветка меню
   // и заголовок не разъедутся, если раздел и направление на миг разошлись.
@@ -141,6 +148,7 @@ function AppShell() {
           {safePage === 'apexpenses' && <ApExpensesPage />}
           {safePage === 'apattr' && <ApAttributionPage />}
           {safePage === 'access' && <PortalAccessPage />}
+          {safePage === 'rop' && <RopPage isAdmin={isAdmin} />}
         </div>
       </div>
     </div>

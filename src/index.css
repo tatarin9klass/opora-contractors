@@ -637,3 +637,129 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
   .portal-outcomes { display: grid; grid-template-columns: repeat(2, 1fr); }
   .portal-outcome { min-width: 0; }
 }
+
+/* ============================================================================
+   Кабинет руководителя отдела продаж
+
+   Отдельный блок по той же причине, что и кабинет подрядчика: экран смотрит
+   человек, которому наши внутренние таблицы не нужны, и подгонять общие
+   классы под него значило бы ломать всё остальное. Переиспользуются .btn,
+   .filter-chip, .table-wrap, .portal-period и .portal-section-* — здесь
+   только то, чего в приложении не было: план рядом с фактом и развёртка на
+   источники.
+   ========================================================================= */
+
+/* Вкладки. Два экрана — разные вопросы: «что с отделом» и «что с людьми».
+   Класть их на один экран нельзя: пятнадцать чисел подряд не читаются. */
+.rop-tabs {
+  display: flex; gap: 4px; margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.rop-tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  padding: 8px 14px; font-size: 13px; font-weight: 600;
+  color: var(--text-muted); margin-bottom: -1px;
+}
+.rop-tab:hover { color: var(--text-secondary); }
+.rop-tab.active { color: var(--green-dark); border-bottom-color: var(--green-primary); }
+
+/* Плитки план/факт */
+.rop-metrics {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px; margin-bottom: 12px; align-items: start;
+}
+.rop-metrics > div { height: 100%; }
+.rop-metric {
+  background: var(--white); border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-lg); padding: 14px 16px; height: 100%;
+}
+/* Цвет берёт на себя оценку «план выполнен». Он стоит слева полосой, а не
+   заливкой: заливка кричит, а на экране таких плиток восемь. */
+.rop-metric.ok { border-left-color: var(--green-primary); }
+.rop-metric.warn { border-left-color: var(--yellow); }
+.rop-metric.bad { border-left-color: var(--red); }
+.rop-metric-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.rop-metric-value { font-size: 26px; font-weight: 700; line-height: 1.2; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.rop-metric.big .rop-metric-value { font-size: 32px; }
+.rop-metric-plan { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.rop-metric-pct { color: var(--text-muted); }
+.rop-metric-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; line-height: 1.5; }
+
+/* Развёртка на маркетинг и рекомендации. Главный разрез отдела: доходимость
+   у этих двух потоков отличается втрое, и общая цифра её прячет. */
+.rop-split { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.rop-split-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+.rop-split-label { color: var(--text-secondary); }
+.rop-split-value { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rop-split-pct { color: var(--text-muted); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+.rop-split-note { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+
+.rop-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; margin-right: 4px; }
+.rop-dot.mk { background: var(--green-primary); }
+.rop-dot.rec { background: var(--yellow); }
+.rop-dot.oth { background: var(--text-muted); }
+
+/* Пояснения. Их здесь больше обычного, и это не многословие: половина
+   показателей считается не так, как подсказывает интуиция, — передача в ОКС
+   оформляется новой карточкой, часть этапов заведена месяц назад. */
+.rop-note {
+  font-size: 12px; color: var(--text-secondary); line-height: 1.6;
+  background: var(--green-bg); border-radius: var(--radius);
+  padding: 9px 12px; margin-bottom: 8px; max-width: 820px;
+}
+.rop-footer {
+  font-size: 11px; color: var(--text-muted); line-height: 1.6;
+  margin-top: 16px; max-width: 820px;
+}
+
+/* Таблица менеджеров */
+.rop-table tbody tr:hover { background: var(--green-bg); }
+.rop-table .rop-subrow td { background: var(--border-light); font-size: 11px; color: var(--text-secondary); }
+.rop-table .rop-subrow:hover td { background: var(--border-light); }
+.rop-conv { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.rop-conv.ok { color: var(--green-primary); font-weight: 600; }
+.rop-conv.bad { color: var(--red); font-weight: 600; }
+/* Конверсия больше ста процентов. Не ошибка — сделка могла попасть на этап
+   мимо предыдущего. Пунктир под числом означает «есть пояснение», оно в
+   подсказке и в подписи под таблицей. */
+.rop-conv.over { border-bottom: 1px dotted currentColor; cursor: help; }
+/* План рядом с фактом в клетке таблицы. Читается как «12/20», и дробь здесь
+   уместна: это и есть факт из плана. */
+.rop-plan { font-size: 11px; color: var(--text-muted); margin-left: 2px; }
+.rop-plan.ok { color: var(--green-primary); }
+.rop-plan.warn { color: var(--yellow); }
+.rop-plan.bad { color: var(--red); }
+
+/* Ввод планов */
+.rop-plans .rop-plan-input {
+  width: 92px; text-align: right; padding: 4px 6px; font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+/* Несохранённая правка подсвечивается: форма большая, кнопка одна, и уйти
+   со страницы, не заметив незаписанного числа, слишком легко. */
+.rop-plans .rop-plan-input.dirty { border-color: var(--yellow); background: var(--yellow-bg); }
+.rop-plans .rop-row-total td { background: var(--green-bg); }
+.rop-plans .rop-row-total:hover td { background: var(--green-bg); }
+.rop-unit { color: var(--text-muted); font-weight: 400; }
+.rop-gap { color: var(--yellow); }
+.rop-saved { font-size: 12px; color: var(--green-primary); font-weight: 600; }
+
+/* Недоступная кнопка должна выглядеть недоступной. Правило общее, хотя и
+   появилось здесь: во всём приложении таких кнопок три десятка, и до сих
+   пор они выглядели нажимаемыми — это читалось как «нажал, не сработало». */
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn-primary:disabled:hover { background: var(--green-primary); }
+.btn-secondary:disabled:hover { background: var(--white); border-color: var(--border); }
+
+@media (max-width: 760px) {
+  .rop-metrics { grid-template-columns: repeat(2, 1fr); }
+  .rop-metric { padding: 12px 14px; }
+  .rop-metric-value { font-size: 22px; }
+  .rop-metric.big .rop-metric-value { font-size: 26px; }
+  .rop-tabs { overflow-x: auto; }
+  .rop-tab { white-space: nowrap; }
+  /* Двенадцать колонок на телефоне не помещаются никак, и ужимать их — это
+     читать «Конверсия» в четыре строки. Прокрутка вбок честнее. */
+  .portal .table-scroll .rop-table { min-width: 900px; }
+}

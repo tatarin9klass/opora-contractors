@@ -82,3 +82,15 @@ export function currentMonth() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
 }
+
+// Склонение числительных. «Скачать 34 заявок» на кнопке, которую человек
+// видит каждый день, выглядит как недоделка — а правило простое и пишется
+// один раз.
+export function plural(n, one, few, many) {
+  const a = Math.abs(n) % 100
+  const b = a % 10
+  if (a > 10 && a < 20) return many
+  if (b > 1 && b < 5) return few
+  if (b === 1) return one
+  return many
+}
