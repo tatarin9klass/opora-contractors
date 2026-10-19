@@ -57,7 +57,7 @@ function Conv({ value, base, inverse }) {
       className={`rop-conv ${tone(value, base, inverse)} ${over ? 'over' : ''}`}
       title={over ? 'Больше 100%: часть сделок попала на этот этап, минуя предыдущий' : undefined}
     >
-      {value}%
+      {formatNum(value)}%
     </span>
   )
 }

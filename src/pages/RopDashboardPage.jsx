@@ -51,7 +51,8 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
               хорошо. Поэтому для неё показывается расхождение в пунктах. */}
           {fact != null && plan > 0 && (inverse
             ? <span className="rop-metric-pct">
-                {' · '}{fact > plan ? 'выше' : 'ниже'} нормы на {Math.abs(Math.round((fact - plan) * 10) / 10)} п.п.
+                {' · '}{fact > plan ? 'выше' : 'ниже'} нормы на{' '}
+                {formatNum(Math.abs(Math.round((fact - plan) * 10) / 10))} п.п.
               </span>
             : <span className="rop-metric-pct"> · {Math.round((100 * fact) / plan)}%</span>
           )}
