@@ -688,10 +688,15 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 
 /* Развёртка на маркетинг и рекомендации. Главный разрез отдела: доходимость
    у этих двух потоков отличается втрое, и общая цифра её прячет. */
-.rop-split { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
-.rop-split-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
-.rop-split-label { color: var(--text-secondary); }
-.rop-split-value { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Ширина развёртки ограничена, хотя плитка бывает во весь экран: иначе
+   подпись «Маркетинг» и её число разъезжаются на метр, и глазу приходится
+   возвращаться по пустой строке. */
+.rop-split { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); max-width: 320px; }
+.rop-split-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; min-width: 0; }
+/* Длинное число не переносится — «225 187 ₽» в две строки читается как две
+   разные суммы. Жертвуем подписью: она и так предсказуема. */
+.rop-split-label { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rop-split-value { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rop-split-pct { color: var(--text-muted); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
 .rop-split-note { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
 

@@ -9,11 +9,12 @@ import { formatNum, plural } from '../lib/helpers.js'
 // ============================================================================
 // Общий дашборд отдела продаж: план против факта.
 //
-// ЧТО ЗДЕСЬ ГЛАВНОЕ ПО УСТРОЙСТВУ. Любой показатель раскрывается в развёртку
-// на маркетинг и рекомендации — это главный разрез отдела: у заявки от
-// агента, из отдела продаж или по рекомендации другой уровень лояльности, и
-// доходимость отличается втрое. Смешивать их в одной цифре значит прятать
-// самое содержательное, что в данных есть.
+// ЧТО ЗДЕСЬ ГЛАВНОЕ ПО УСТРОЙСТВУ. Под каждым показателем стоит развёртка на
+// маркетинг и рекомендации, и стоит всегда, без раскрытия по клику. Это
+// главный разрез отдела: у заявки от агента, из отдела продаж или по
+// рекомендации другой уровень лояльности, и доходимость отличается втрое.
+// Смешивать их в одной цифре значит прятать самое содержательное, что в
+// данных есть, а прятать за кликом — делать вид, что итог самодостаточен.
 //
 // ПЕРЕДАЧА В ОКС НЕ ДЕЛИТСЯ НА ВСТРЕЧИ. В Битриксе передача оформляется
 // новой карточкой без истории встречи, поэтому передачи месяца относятся к
@@ -67,23 +68,43 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
   )
 }
 
-function Split({ rows, pick, label }) {
-  const total = GROUPS.reduce((a, g) => a + pick(sumRows(rows, g.id)), 0)
+// Развёртка на источники. Видна всегда, а не по клику: у заявки от агента и
+// у заявки по рекомендации разная доходимость, и общая цифра её прячет.
+// Прятать главный разрез за взаимодействием значит делать вид, что итог
+// самодостаточен — а он не самодостаточен ни в одной строке этого экрана.
+//
+// Маркетинг и рекомендации показываются всегда, даже нулём: так карточки не
+// прыгают по высоте от периода к периоду. «Прочее» появляется, только когда
+// в нём что-то есть, — пустая строка в каждой плитке отвлекала бы.
+//
+// kind решает, как читать число. Доли считаются только для количеств: у
+// среднего чека доля от суммы средних не значит ничего, а у доли брака
+// складывать проценты групп просто нельзя.
+function Split({ rows, pick, kind = 'count' }) {
+  const vals = GROUPS.map(g => ({ g, v: pick(sumRows(rows, g.id)) }))
+  const shown = vals.filter(x => x.g.id !== 'прочее' || x.v)
+  if (!shown.some(x => x.v)) return null
+  const total = kind === 'count' ? vals.reduce((a, x) => a + (x.v || 0), 0) : 0
+
+  const fmt = (v) => {
+    if (v == null || (kind !== 'count' && !v)) return '—'
+    if (kind === 'money') return formatMoneyShort(v)
+    if (kind === 'pct') return formatNum(Math.round(v * 10) / 10) + '%'
+    return formatNum(v)
+  }
+
   return (
     <div className="rop-split">
-      {GROUPS.map(g => {
-        const v = pick(sumRows(rows, g.id))
-        if (!v) return null
-        return (
-          <div key={g.id} className="rop-split-row">
-            <span className={`rop-dot ${g.id === 'маркетинг' ? 'mk' : g.id === 'рекомендации' ? 'rec' : 'oth'}`} />
-            <span className="rop-split-label">{g.label}</span>
-            <span className="rop-split-value">{formatNum(v)}</span>
-            <span className="rop-split-pct">{total ? Math.round((100 * v) / total) + '%' : ''}</span>
-          </div>
-        )
-      })}
-      {label && <div className="rop-split-note">{label}</div>}
+      {shown.map(({ g, v }) => (
+        <div key={g.id} className="rop-split-row">
+          <span className={`rop-dot ${g.id === 'маркетинг' ? 'mk' : g.id === 'рекомендации' ? 'rec' : 'oth'}`} />
+          <span className="rop-split-label">{g.label}</span>
+          <span className="rop-split-value">{fmt(v)}</span>
+          <span className="rop-split-pct">
+            {kind === 'count' && total ? Math.round((100 * (v || 0)) / total) + '%' : ''}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -96,7 +117,6 @@ export default function RopDashboardPage() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [open, setOpen] = useState(null)
 
   const months = useMemo(() => recentMonths(12), [])
   const bounds = useMemo(
@@ -123,8 +143,6 @@ export default function RopDashboardPage() {
   const чек = avgCheck(total)
   const брак = brakShare(total)
   const rr = runRate(total.окс_всего, bounds.from, bounds.to)
-
-  const toggle = (key) => setOpen(prev => (prev === key ? null : key))
 
   if (loading && !data) return <div className="loading">Загрузка...</div>
 
@@ -168,23 +186,20 @@ export default function RopDashboardPage() {
       </div>
 
       <div className="rop-metrics">
-        <div onClick={() => toggle('окс')} style={{ cursor: 'pointer' }}>
-          <Metric label="Все" fact={total.окс_всего} plan={plan('оксвсего')} unit="шт" bounds={bounds} big>
-            {open === 'окс' && <Split rows={rows} pick={t => t.окс_всего} />}
-          </Metric>
-        </div>
-        <div onClick={() => toggle('аз')} style={{ cursor: 'pointer' }}>
-          <Metric label="АЗ" fact={total.окс_аз} plan={plan('оксаз')} unit="шт" bounds={bounds}>
-            {open === 'аз' && <Split rows={rows} pick={t => t.окс_аз} />}
-          </Metric>
-        </div>
-        <div onClick={() => toggle('вки')} style={{ cursor: 'pointer' }}>
-          <Metric label="ВКИ" fact={total.окс_вки} plan={plan('оксвки')} unit="шт" bounds={bounds}>
-            {open === 'вки' && <Split rows={rows} pick={t => t.окс_вки} />}
-          </Metric>
-        </div>
-        {/* Темп сравнивается с месячным планом целиком, без доли дней: он
-            и отвечает на вопрос «а к концу месяца хватит?». */}
+        <Metric label="Все" fact={total.окс_всего} plan={plan('оксвсего')} unit="шт" bounds={bounds} big>
+          <Split rows={rows} pick={t => t.окс_всего} />
+        </Metric>
+        <Metric label="АЗ" fact={total.окс_аз} plan={plan('оксаз')} unit="шт" bounds={bounds}>
+          <Split rows={rows} pick={t => t.окс_аз} />
+        </Metric>
+        <Metric label="ВКИ" fact={total.окс_вки} plan={plan('оксвки')} unit="шт" bounds={bounds}>
+          <Split rows={rows} pick={t => t.окс_вки} />
+        </Metric>
+        {/* Темп сравнивается с месячным планом целиком, без доли дней: он и
+            отвечает на вопрос «а к концу месяца хватит?». Развёртки у него
+            нет намеренно — это не факт, а продолжение линии, и делить
+            предсказание на источники значит придавать ему точность,
+            которой в нём нет. */}
         <Metric
           label="Runrate" fact={rr} plan={plan('оксвсего')} unit="шт" additive={false}
           sub={rr === total.окс_всего ? 'период закрыт' : 'при текущем темпе'}
@@ -200,11 +215,9 @@ export default function RopDashboardPage() {
         <h2 className="portal-section-title">Встречи</h2>
       </div>
       <div className="rop-metrics">
-        <div onClick={() => toggle('встречи')} style={{ cursor: 'pointer' }}>
-          <Metric label="Проведено встреч" fact={total.встречи} plan={plan('встречи')} unit="шт" bounds={bounds} big>
-            {open === 'встречи' && <Split rows={rows} pick={t => t.встречи} />}
-          </Metric>
-        </div>
+        <Metric label="Проведено встреч" fact={total.встречи} plan={plan('встречи')} unit="шт" bounds={bounds} big>
+          <Split rows={rows} pick={t => t.встречи} />
+        </Metric>
       </div>
 
       {/* ---- Дополнительные ---- */}
@@ -217,23 +230,29 @@ export default function RopDashboardPage() {
       </div>
 
       <div className="rop-metrics">
-        <div onClick={() => toggle('брак')} style={{ cursor: 'pointer' }}>
-          <Metric
-            label="Брак" fact={брак == null ? null : Math.round(брак * 10) / 10}
-            plan={plan('бракнорма')} unit="%" inverse additive={false}
-            sub={`${formatNum(total.брак)} из ${formatNum(total.встречи)} ${plural(total.встречи, 'встречи', 'встреч', 'встреч')}`}
-          >
-            {open === 'брак' && <Split rows={rows} pick={t => t.брак} />}
-          </Metric>
-        </div>
+        <Metric
+          label="Брак" fact={брак == null ? null : Math.round(брак * 10) / 10}
+          plan={plan('бракнорма')} unit="%" inverse additive={false}
+          sub={`${formatNum(total.брак)} из ${formatNum(total.встречи)} ${plural(total.встречи, 'встречи', 'встреч', 'встреч')}`}
+        >
+          {/* В развёртке доля брака внутри каждой группы, а не дележ 29
+              штук на две части. Вопрос у руководителя не «откуда брак», а
+              «где бракуют чаще», и на него отвечают только проценты. */}
+          <Split rows={rows} kind="pct"
+                 pick={t => (t.встречи ? (100 * t.брак) / t.встречи : null)} />
+        </Metric>
         <Metric
           label="Средний чек" fact={чек} plan={plan('среднийчек')} unit="₽" additive={false}
           sub={`по ${formatNum(total.чек_сделок)} ${plural(total.чек_сделок, 'сделке', 'сделкам', 'сделкам')} с договором`}
-        />
+        >
+          <Split rows={rows} kind="money" pick={t => avgCheck(t)} />
+        </Metric>
         <Metric
           label="ФПА" fact={total.фпа_сумма || null} unit="₽"
           sub="продаётся отдельно, в чек не входит"
-        />
+        >
+          <Split rows={rows} kind="money" pick={t => t.фпа_сумма} />
+        </Metric>
       </div>
 
       {!loading && !total.встречи && !total.окс_всего && (
