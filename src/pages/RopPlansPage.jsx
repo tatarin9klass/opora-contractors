@@ -37,7 +37,7 @@ function toValue(raw) {
   return Number.isFinite(n) ? n : null
 }
 
-export default function RopPlansPage({ team = null }) {
+export default function RopPlansPage({ team = null, isAdmin = false }) {
   const months = useMemo(() => recentMonths(12), [])
   // Планы ставят на текущий месяц чаще всего, но следующий тоже нужен —
   // иначе первого числа план «появляется» задним числом.
@@ -165,6 +165,9 @@ export default function RopPlansPage({ team = null }) {
       <div className="portal-section-head">
         <h2 className="portal-section-title">Планы на месяц</h2>
         <p className="portal-section-note">
+          {isAdmin
+            ? 'План на отдел ставите вы, раскладку по менеджерам может менять руководитель отдела. '
+            : 'План на отдел ставит руководитель направления — эта строка заблокирована. Раскладка по менеджерам ваша. '}
           Пустая клетка — плана нет: на дашборде по такой метрике не будет ни
           плана, ни оценки. «Брак» задаётся нормой в процентах и читается как
           «не выше», остальные метрики — как «не ниже».
@@ -210,6 +213,10 @@ export default function RopPlansPage({ team = null }) {
                     {PLAN_METRICS.map(m => {
                       const k = cellKey(r.name, m.id)
                       const dirty = changes.some(c => c.k === k)
+                      // Строку отдела правит только руководитель направления.
+                      // База это и так не даст сделать, но запрет должен быть
+                      // виден до нажатия, а не всплывать ошибкой после.
+                      const locked = !r.name && !isAdmin
                       return (
                         <td key={m.id} className="portal-num">
                           <input
@@ -217,6 +224,8 @@ export default function RopPlansPage({ team = null }) {
                             inputMode="decimal"
                             value={form[k] ?? ''}
                             placeholder="—"
+                            disabled={locked}
+                            title={locked ? 'План на отдел ставит руководитель направления' : undefined}
                             onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))}
                           />
                         </td>

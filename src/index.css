@@ -804,3 +804,7 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
   .rop-stuck-stage { min-width: 0; }
   .rop-stuck-sum { display: none; }
 }
+/* Граница между показателями периода и снимком «сейчас». Без неё глаз
+   читает четырнадцать колонок как один ряд однородных чисел, а это два
+   разных вопроса: «как сработал» и «чем работает дальше». */
+.rop-table th.rop-sep, .rop-table td.rop-sep { border-left: 2px solid var(--border); }

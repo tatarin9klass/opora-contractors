@@ -30,6 +30,10 @@ const TABS = [
   { id: 'dash', label: 'Общий дашборд' },
   { id: 'portfolio', label: 'Портфель' },
   { id: 'managers', label: 'Менеджеры' },
+  // Планы ставит и РОП — но только по своим менеджерам. Строку отдела
+  // целиком форма ему не даст: это обязательство перед направлением, и
+  // право на него проверяется в базе, а не в интерфейсе.
+  { id: 'plans', label: 'Планы' },
 ]
 
 export default function RopPage({ standalone = false, isAdmin = false }) {
@@ -39,7 +43,7 @@ export default function RopPage({ standalone = false, isAdmin = false }) {
   // Отделов продаж два, и у каждого свой руководитель. База отдаёт роли rop
   // только её собственный, поэтому список из одной строки означает «выбирать
   // не из чего» — переключатель тогда не показывается вовсе.
-  const [teams, setTeams] = useState([])
+  const [teams, setTeams] = useState(null)
   const [team, setTeam] = useState(null)
   useEffect(() => {
     supabase.from('rop_portal_teams').select('*').order('sort_order')
@@ -49,7 +53,13 @@ export default function RopPage({ standalone = false, isAdmin = false }) {
       })
   }, [])
 
-  const tabs = isAdmin ? [...TABS, { id: 'plans', label: 'Планы' }] : TABS
+  const tabs = TABS
+
+  // Отделов нет ни одного — значит человеку не назначен отдел, и все витрины
+  // вернут пустоту. Показать в этом случае нули было бы худшим из возможных:
+  // руководитель решил бы, что отдел не работает, и пошёл бы разбираться не
+  // туда. Экран обязан сказать, что дело в доступе.
+  const noTeam = teams !== null && teams.length === 0
 
   const body = (
     <>
@@ -63,17 +73,29 @@ export default function RopPage({ standalone = false, isAdmin = false }) {
             {t.label}
           </button>
         ))}
-        {teams.length > 1 && (
+        {teams && teams.length > 1 && (
           <select className="filter-select rop-team" value={team || ''}
                   onChange={e => setTeam(e.target.value)}>
-            {teams.map(t => <option key={t.отдел} value={t.отдел}>{t.название}</option>)}
+            {(teams || []).map(t => <option key={t.отдел} value={t.отдел}>{t.название}</option>)}
           </select>
         )}
       </div>
-      {tab === 'dash' && <RopDashboardPage team={team} />}
-      {tab === 'portfolio' && <RopPortfolioPage team={team} />}
-      {tab === 'managers' && <RopManagersPage team={team} />}
-      {tab === 'plans' && isAdmin && <RopPlansPage team={team} />}
+      {noTeam && (
+        <div className="empty-state" style={{ marginTop: 24 }}>
+          <div className="empty-state-icon">🔧</div>
+          <h3>Отдел не назначен</h3>
+          <p>
+            Доступ выдан, но не указано, каким отделом вы руководите, — поэтому
+            показывать нечего. Это настройка на нашей стороне: сообщите
+            администратору, и кабинет откроется без каких-либо действий с вашей
+            стороны.
+          </p>
+        </div>
+      )}
+      {!noTeam && tab === 'dash' && <RopDashboardPage team={team} />}
+      {!noTeam && tab === 'portfolio' && <RopPortfolioPage team={team} />}
+      {!noTeam && tab === 'managers' && <RopManagersPage team={team} />}
+      {!noTeam && tab === 'plans' && <RopPlansPage team={team} isAdmin={isAdmin} />}
     </>
   )
 

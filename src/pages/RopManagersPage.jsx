@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { todayISO } from '../lib/dateContext.js'
 import {
-  loadRopData, periodBounds, recentMonths, planFor, planStatus, paceTarget, byTeam,
-  formatMoneyShort, GROUPS,
+  loadRopData, loadPortfolio, portfolioByManager, periodBounds, recentMonths,
+  planFor, planStatus, paceTarget, byTeam, formatMoneyShort, GROUPS,
 } from '../lib/rop.js'
 import { formatNum } from '../lib/helpers.js'
 
@@ -68,6 +68,7 @@ export default function RopManagersPage({ team = null }) {
   const [from, setFrom] = useState(todayISO())
   const [to, setTo] = useState(todayISO())
   const [data, setData] = useState(null)
+  const [pf, setPf] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [openRow, setOpenRow] = useState(null)
@@ -84,6 +85,24 @@ export default function RopManagersPage({ team = null }) {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [bounds.from, bounds.to])
+
+  // Портфель грузится отдельно и не зависит от периода: это снимок на
+  // сегодня. Он здесь затем, что по одному потоку нельзя судить о человеке —
+  // месяц мог быть отличным при пустом портфеле, и тогда следующий уже
+  // предрешён.
+  useEffect(() => {
+    let cancelled = false
+    loadPortfolio()
+      .then(d => { if (!cancelled) setPf(d) })
+      .catch(() => { if (!cancelled) setPf({ portfolio: [] }) })
+    return () => { cancelled = true }
+  }, [])
+
+  const запас = useMemo(() => {
+    const m = new Map()
+    for (const r of portfolioByManager(byTeam(pf?.portfolio || [], team))) m.set(r.менеджер, r)
+    return m
+  }, [pf, team])
 
   // Свод по менеджеру, и отдельно по каждой группе источника — для развёртки.
   // Заодно складывается отдел целиком: он нужен как база сравнения, по
@@ -177,6 +196,8 @@ export default function RopManagersPage({ team = null }) {
                 <th>договор→оплата</th>
                 <th>В ОКС</th>
                 <th>Чек БФЛ</th>
+                <th className="rop-sep">В работе</th>
+                <th>Залежалось</th>
               </tr>
             </thead>
             <tbody>
@@ -221,6 +242,25 @@ export default function RopManagersPage({ team = null }) {
                           ? formatMoneyShort(t.чек_бфл_сумма / t.чек_бфл_сделок)
                           : <span className="td-muted">—</span>}
                       </td>
+                      {(() => {
+                        const z = запас.get(m.менеджер)
+                        const всего = z ? z.всего + z.приёмка : 0
+                        const доля = z && z.всего ? z.залежалось / z.всего : 0
+                        return (
+                          <>
+                            <td className="portal-num rop-sep">
+                              {всего ? formatNum(всего) : <span className="td-muted">—</span>}
+                            </td>
+                            <td className="portal-num">
+                              {z && z.залежалось
+                                ? <span className={доля > 0.4 ? 'rop-conv bad' : доля > 0.2 ? 'rop-conv warn' : 'rop-conv'}>
+                                    {formatNum(z.залежалось)}
+                                  </span>
+                                : <span className="td-muted">—</span>}
+                            </td>
+                          </>
+                        )
+                      })()}
                     </tr>
 
                     {openRow === m.менеджер && GROUPS.map(g => {
@@ -252,6 +292,8 @@ export default function RopManagersPage({ team = null }) {
                               ? formatMoneyShort(s.чек_бфл_сумма / s.чек_бфл_сделок)
                               : <span className="td-muted">—</span>}
                           </td>
+                          <td className="rop-sep" />
+                          <td />
                         </tr>
                       )
                     })}
@@ -274,7 +316,10 @@ export default function RopManagersPage({ team = null }) {
         конверсии: передача оформляется отдельной карточкой и к встрече этого
         периода не относится. «Чек БФЛ» — только по сделкам с продуктом
         банкротства, без ФПА. План рядом с фактом месячный, а цвет у него —
-        по темпу на сегодняшний день.
+        по темпу на сегодняшний день. Две последние колонки за линией — это не
+        период, а снимок на сегодня: сколько сделок у человека в работе и
+        сколько из них стоит дольше нормы своего этапа. Разбор по ним — на
+        вкладке «Портфель».
       </div>
     </div>
   )
