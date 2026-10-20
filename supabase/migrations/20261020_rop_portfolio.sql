@@ -24,6 +24,19 @@
 -- ниже правды.
 -- ============================================================================
 
+-- Портфель опирается на отделы: без них непонятно, чей это менеджер.
+-- Без этой проверки отсутствующая колонка даёт «column m.team does not
+-- exist» на сто девяностой строке — сообщение, по которому не догадаешься,
+-- что просто перепутан порядок файлов.
+do $$
+begin
+  if to_regclass('public.rop_teams') is null
+     or not exists (select 1 from information_schema.columns
+                    where table_name = 'rop_managers' and column_name = 'team') then
+    raise exception 'Сначала прогони 20261020_rop_teams.sql: портфель опирается на отделы';
+  end if;
+end $$;
+
 alter table rop_deals add column if not exists closed boolean;
 
 comment on column rop_deals.closed is
