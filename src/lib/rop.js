@@ -267,3 +267,173 @@ export function portfolioByManager(rows) {
   }
   return [...m.values()].sort((a, b) => (b.всего + b.приёмка) - (a.всего + a.приёмка))
 }
+
+// ============================================================================
+// Экран «Сегодня»: список дел вместо списка цифр.
+//
+// ПОЧЕМУ СПИСОК ДЕЛ СОБИРАЕТСЯ ЗДЕСЬ, А НЕ В БАЗЕ. Правила, по которым
+// сделка попадает в работу на сегодня, меняются чаще всего остального:
+// сегодня «встреча без предложения третий день», завтра «второй». Держать
+// их в витринах значило бы ходить в миграции за каждой такой правкой.
+// Сделок три сотни, они приезжают целиком, и всё считается на месте.
+// ============================================================================
+export async function loadLost(fromISO, toISO) {
+  return fetchAllRows(() => supabase.from('rop_portal_lost').select('*')
+    .gte('дата', fromISO).lte('дата', toISO))
+}
+
+export async function loadDeals() {
+  const [deals, pace] = await Promise.all([
+    fetchAllRows(() => supabase.from('rop_portal_deals').select('*')),
+    fetchAllRows(() => supabase.from('rop_portal_pace').select('*')),
+  ])
+  return { deals, pace }
+}
+
+// Деньги сделки: сперва товарные позиции, потом сумма в карточке. Если нет
+// ни того, ни другого — ноль, и это видно отдельной строкой в списке дел.
+export function dealMoney(d) {
+  return Number(d.чек || 0) || Number(d.сумма_поля || 0) || 0
+}
+
+// Дела отдела на сегодня. Каждое — не метрика, а повод к разговору: есть
+// заголовок, есть счёт, есть деньги и есть список карточек, который можно
+// открыть и пройти по нему сверху вниз.
+//
+// ПОРЯДОК — ПО ДЕНЬГАМ, А НЕ ПО КОЛИЧЕСТВУ. Шесть зависших сделок на
+// миллион важнее двадцати на сто тысяч, и сортировка обязана это понимать.
+export function todoList(deals, { остатокПлана = null, ожидаемо = 0 } = {}) {
+  const items = []
+  const money = arr => arr.reduce((a, d) => a + dealMoney(d), 0)
+
+  const залежались = deals.filter(d => d.залежалась && d.состояние === 'в работе')
+  if (залежались.length) {
+    items.push({
+      id: 'stuck', tone: 'bad',
+      title: 'Сделки стоят дольше нормы своего этапа',
+      hint: 'норма у каждого этапа своя и взята из истории переходов',
+      count: залежались.length, money: money(залежались), deals: залежались,
+    })
+  }
+
+  // Встреча прошла, предложения нет. Правило жёсткое и намеренно не
+  // выводится из истории: три дня — это управленческая норма, а не
+  // наблюдение. Если ИКП не сформирован за три дня, разговор остыл.
+  const безИкп = deals.filter(d => d.stage_id === 'C34:NEW' && d.дней_без_движения >= 3)
+  if (безИкп.length) {
+    items.push({
+      id: 'no-ikp', tone: 'warn',
+      title: 'Встреча прошла, предложение не сформировано',
+      hint: 'третий день и дольше после консультации',
+      count: безИкп.length, money: money(безИкп), deals: безИкп,
+    })
+  }
+
+  const приёмка = deals.filter(d => d.состояние === 'на приёмке' && d.залежалась)
+  if (приёмка.length) {
+    items.push({
+      id: 'accept', tone: 'warn',
+      title: 'Зависли на приёмке в ОКС',
+      hint: 'приёмка занимает до трёх рабочих дней',
+      count: приёмка.length, money: money(приёмка), deals: приёмка,
+    })
+  }
+
+  const уУшедших = deals.filter(d => d.работает === false)
+  if (уУшедших.length) {
+    items.push({
+      id: 'left', tone: 'bad',
+      title: 'Сделки на уволенном сотруднике',
+      hint: 'их никто не ведёт — нужно передать',
+      count: уУшедших.length, money: money(уУшедших), deals: уУшедших,
+    })
+  }
+
+  const безДенег = deals.filter(d => d.stage_id === 'C34:PREPARATION'
+    && !Number(d.чек) && !Number(d.сумма_поля))
+  if (безДенег.length) {
+    items.push({
+      id: 'no-sum', tone: '',
+      title: 'Предложение сформировано, а суммы нет',
+      hint: 'ни товарных позиций, ни суммы в карточке — потенциал не посчитать',
+      count: безДенег.length, money: 0, deals: безДенег,
+    })
+  }
+
+  if (остатокПлана != null && остатокПлана > 0 && ожидаемо < остатокПлана) {
+    items.push({
+      id: 'gap', tone: 'bad', noDeals: true,
+      title: 'Портфеля не хватает на остаток плана',
+      hint: `при обычных шансах этапов выйдет ${Math.round(ожидаемо)} из ${остатокПлана} — нужны новые встречи`,
+      count: остатокПлана - Math.round(ожидаемо), money: 0, deals: [],
+    })
+  }
+
+  return items.sort((a, b) => (b.money - a.money) || (b.count - a.count))
+}
+
+// Нагрузка: у кого портфель заметно больше или меньше среднего по отделу.
+// Решение о перераспределении принимает руководитель, но заметить перекос
+// должен экран — иначе он так и останется двумя колонками в таблице.
+export function loadBalance(deals) {
+  const by = new Map()
+  for (const d of deals) {
+    if (d.состояние !== 'в работе') continue
+    const c = by.get(d.менеджер) || { менеджер: d.менеджер, сделок: 0, залежалось: 0, деньги: 0 }
+    c.сделок += 1
+    if (d.залежалась) c.залежалось += 1
+    c.деньги += dealMoney(d)
+    by.set(d.менеджер, c)
+  }
+  const list = [...by.values()]
+  if (list.length < 2) return { list, среднее: list[0]?.сделок || 0, перекос: null }
+  const среднее = list.reduce((a, x) => a + x.сделок, 0) / list.length
+  const max = list.reduce((a, b) => (a.сделок > b.сделок ? a : b))
+  const min = list.reduce((a, b) => (a.сделок < b.сделок ? a : b))
+  // Перекос считаем значимым от полутора раз: меньшая разница в отделе из
+  // четырёх человек — обычная неравномерность недели, а не проблема.
+  const перекос = min.сделок > 0 && max.сделок / min.сделок >= 1.5 ? { max, min } : null
+  return { list: list.sort((a, b) => b.сделок - a.сделок), среднее, перекос }
+}
+
+// Предыдущий сопоставимый период. Для месяца — прошлый месяц целиком, для
+// остальных — столько же дней подряд перед началом. Нужен затем, что
+// «брак 29%» сам по себе не говорит ничего: он говорит только рядом с тем,
+// сколько было.
+export function prevBounds(mode, from, to) {
+  if (mode === 'month') {
+    const [y, m] = from.split('-').map(Number)
+    const py = m === 1 ? y - 1 : y
+    const pm = m === 1 ? 12 : m - 1
+    return monthBounds(`${py}-${String(pm).padStart(2, '0')}-01`)
+  }
+  const days = Math.round(
+    (new Date(to + 'T12:00:00Z') - new Date(from + 'T12:00:00Z')) / 86400000) + 1
+  return { from: addDaysISO(from, -days), to: addDaysISO(from, -1) }
+}
+
+// Накопленный факт по дням и равномерный план к тому же дню. Руководителю
+// нужна не точка «28 из 40», а траектория: по ней видно, в какой день
+// отстали и успевают ли нагнать.
+export function cumulative(rows, from, to, plan, pick = r => r.окс_всего) {
+  const byDay = new Map()
+  for (const r of rows) {
+    const d = String(r.дата).slice(0, 10)
+    byDay.set(d, (byDay.get(d) || 0) + Number(pick(r) || 0))
+  }
+  const out = []
+  const total = Math.round(
+    (new Date(to + 'T12:00:00Z') - new Date(from + 'T12:00:00Z')) / 86400000) + 1
+  let acc = 0
+  const today = todayISO()
+  for (let i = 0; i < total; i++) {
+    const d = addDaysISO(from, i)
+    acc += byDay.get(d) || 0
+    out.push({
+      дата: d,
+      факт: d <= today ? acc : null,
+      план: plan == null ? null : Math.round((plan * (i + 1)) / total),
+    })
+  }
+  return out
+}

@@ -5,6 +5,7 @@ import RopDashboardPage from './RopDashboardPage.jsx'
 import RopManagersPage from './RopManagersPage.jsx'
 import RopPlansPage from './RopPlansPage.jsx'
 import RopPortfolioPage from './RopPortfolioPage.jsx'
+import RopTodayPage from './RopTodayPage.jsx'
 
 // ============================================================================
 // Кабинет руководителя отдела продаж.
@@ -27,7 +28,10 @@ import RopPortfolioPage from './RopPortfolioPage.jsx'
 // ============================================================================
 
 const TABS = [
-  { id: 'dash', label: 'Общий дашборд' },
+  // «Сегодня» первым намеренно: руководитель отдела открывает кабинет с
+  // вопросом «кого дёрнуть», а не «как дела». Итоги на соседней вкладке.
+  { id: 'today', label: 'Сегодня' },
+  { id: 'dash', label: 'Итоги' },
   { id: 'portfolio', label: 'Портфель' },
   { id: 'managers', label: 'Менеджеры' },
   // Планы ставит и РОП — но только по своим менеджерам. Строку отдела
@@ -38,7 +42,7 @@ const TABS = [
 
 export default function RopPage({ standalone = false, isAdmin = false }) {
   const { session, signOut } = useAuth()
-  const [tab, setTab] = useState('dash')
+  const [tab, setTab] = useState('today')
 
   // Отделов продаж два, и у каждого свой руководитель. База отдаёт роли rop
   // только её собственный, поэтому список из одной строки означает «выбирать
@@ -92,6 +96,7 @@ export default function RopPage({ standalone = false, isAdmin = false }) {
           </p>
         </div>
       )}
+      {!noTeam && tab === 'today' && <RopTodayPage team={team} />}
       {!noTeam && tab === 'dash' && <RopDashboardPage team={team} />}
       {!noTeam && tab === 'portfolio' && <RopPortfolioPage team={team} />}
       {!noTeam && tab === 'managers' && <RopManagersPage team={team} />}

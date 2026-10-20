@@ -3,6 +3,7 @@ import { todayISO } from '../lib/dateContext.js'
 import {
   loadRopData, periodBounds, recentMonths, sumRows, avgCheck, brakShare,
   planFor, runRate, planStatus, paceTarget, stageMissing, formatMoneyShort, GROUPS, byTeam,
+  prevBounds, cumulative, loadDeals, loadLost,
 } from '../lib/rop.js'
 import { formatNum, plural } from '../lib/helpers.js'
 
@@ -29,7 +30,7 @@ const MODES = [
   { id: 'range', label: 'Период' },
 ]
 
-function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub, big, children }) {
+function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub, was, big, children }) {
   // Цвет ставится по темпу, а не по месячному плану целиком: иначе середина
   // месяца всегда красная. Сам план в подписи остаётся месячным — подменять
   // его нельзя, человек должен видеть ту цифру, на которую подписался.
@@ -62,6 +63,21 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
           )}
         </div>
       )}
+      {/* «Было» рядом с цифрой отвечает на вопрос, который иначе остаётся
+          без ответа: двадцать восемь передач — это много или мало. Без
+          прошлого периода любая метрика читается как нейтральная. */}
+      {was != null && fact != null && (
+        <div className="rop-metric-was">
+          было {unit === '₽' ? formatMoneyShort(was) : formatNum(was)}{unit === '%' ? '%' : ''}
+          {was > 0 && (
+            <span className={`rop-delta ${
+              (fact > was) === !inverse ? 'up' : fact === was ? '' : 'down'}`}>
+              {fact === was ? ' ·' : fact > was ? ' ↑' : ' ↓'}
+              {fact === was ? ' столько же' : ` ${Math.abs(Math.round((100 * (fact - was)) / was))}%`}
+            </span>
+          )}
+        </div>
+      )}
       {sub && <div className="rop-metric-sub">{sub}</div>}
       {children}
     </div>
@@ -80,6 +96,68 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
 // kind решает, как читать число. Доли считаются только для количеств: у
 // среднего чека доля от суммы средних не значит ничего, а у доли брака
 // складывать проценты групп просто нельзя.
+
+// Накопленная линия факта против равномерного плана.
+//
+// ЭТО ГЛАВНЫЙ ГРАФИК ОТДЕЛА ПРОДАЖ, и до сих пор его не было. План против
+// факта одной цифрой — это точка: «28 из 40». Точка не отвечает на вопрос,
+// который руководитель задаёт каждый день: успеваем или нет. Линия
+// отвечает — по ней видно, в какой день разошлись и растёт ли разрыв.
+//
+// План рисуется равномерным, хотя продажи неравномерны: ровная линия нужна
+// как линейка, а не как прогноз. Отклонение от неё и есть сообщение.
+function Burnup({ data, plan }) {
+  const W = 760, H = 200, L = 36, R = 54, T = 10, B = 22
+  const hi = Math.max(plan || 0, ...data.map(d => d.факт || 0), 1)
+  const n = data.length
+  const X = i => L + ((W - L - R) * i) / Math.max(1, n - 1)
+  const Y = v => T + (H - T - B) - ((H - T - B) * v) / hi
+  const line = (key) => {
+    const pts = data.map((d, i) => [X(i), d[key] == null ? null : Y(d[key])])
+      .filter(p => p[1] != null)
+    return pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ')
+  }
+  const last = [...data].reverse().find(d => d.факт != null)
+  const lastI = last ? data.indexOf(last) : 0
+  const отставание = last && last.план != null ? last.факт - last.план : null
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="rop-burnup">
+      {[0, 0.5, 1].map(f => (
+        <g key={f}>
+          <line x1={L} y1={Y(hi * f)} x2={W - R} y2={Y(hi * f)} stroke="#e4ebe2" />
+          <text x={L - 6} y={Y(hi * f) + 3.5} fontSize="9.5" fill="#6b7670" textAnchor="end">
+            {Math.round(hi * f)}
+          </text>
+        </g>
+      ))}
+      {data.map((d, i) => (i % 7 === 0 ? (
+        <text key={d.дата} x={X(i)} y={H - 6} fontSize="9" fill="#6b7670" textAnchor="middle">
+          {d.дата.slice(8)}
+        </text>
+      ) : null))}
+      {plan != null && (
+        <path d={line('план')} fill="none" stroke="#8d968f" strokeWidth="1.5" strokeDasharray="4 4" />
+      )}
+      <path d={line('факт')} fill="none" stroke="#1f6f3f" strokeWidth="2.5" strokeLinejoin="round" />
+      {last && (
+        <>
+          <circle cx={X(lastI)} cy={Y(last.факт)} r="4.5" fill="#1f6f3f" stroke="#fff" strokeWidth="2" />
+          <text x={X(lastI) + 9} y={Y(last.факт) + 4} fontSize="11.5" fontWeight="700" fill="#1a1f1c">
+            {last.факт}
+          </text>
+          {отставание != null && отставание !== 0 && (
+            <text x={X(lastI) + 9} y={Y(last.факт) + 17} fontSize="9.5"
+                  fill={отставание > 0 ? '#1f6f3f' : '#d93025'}>
+              {отставание > 0 ? '+' : ''}{отставание} к графику
+            </text>
+          )}
+        </>
+      )}
+    </svg>
+  )
+}
+
 function Split({ rows, pick, kind = 'count' }) {
   const vals = GROUPS.map(g => ({ g, v: pick(sumRows(rows, g.id)) }))
   const shown = vals.filter(x => x.g.id !== 'прочее' || x.v)
@@ -115,6 +193,9 @@ export default function RopDashboardPage({ team = null }) {
   const [from, setFrom] = useState(todayISO())
   const [to, setTo] = useState(todayISO())
   const [data, setData] = useState(null)
+  const [prev, setPrev] = useState(null)
+  const [pace, setPace] = useState(null)
+  const [lost, setLost] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -132,14 +213,35 @@ export default function RopDashboardPage({ team = null }) {
       .then(d => { if (!cancelled) setData(d) })
       .catch(e => { if (!cancelled) setError(String(e?.message || e)) })
       .finally(() => { if (!cancelled) setLoading(false) })
+
+    // Прошлый сопоставимый период грузится отдельно и молча: если он не
+    // придёт, экран просто останется без сравнения, а не сломается.
+    loadLost(bounds.from, bounds.to)
+      .then(l => { if (!cancelled) setLost(l) })
+      .catch(() => { if (!cancelled) setLost([]) })
+
+    const pb = prevBounds(mode, bounds.from, bounds.to)
+    loadRopData(pb.from, pb.to)
+      .then(d => { if (!cancelled) setPrev(d) })
+      .catch(() => { if (!cancelled) setPrev(null) })
     return () => { cancelled = true }
-  }, [bounds.from, bounds.to])
+  }, [bounds.from, bounds.to, mode])
+
+  useEffect(() => {
+    let cancelled = false
+    loadDeals().then(d => { if (!cancelled) setPace(d.pace) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const rows = byTeam(data?.daily || [], team)
   const plans = data?.plans || []
   const total = useMemo(() => sumRows(rows), [rows])
   const plan = (m) => planFor(plans, bounds.from, m, null, team)
 
+  const было = useMemo(
+    () => (prev ? sumRows(byTeam(prev.daily || [], team)) : null),
+    [prev, team],
+  )
   const чек = avgCheck(total)
   const брак = brakShare(total)
   const rr = runRate(total.окс_всего, bounds.from, bounds.to)
@@ -186,13 +288,14 @@ export default function RopDashboardPage({ team = null }) {
       </div>
 
       <div className="rop-metrics">
-        <Metric label="Все" fact={total.окс_всего} plan={plan('оксвсего')} unit="шт" bounds={bounds} big>
+        <Metric label="Все" fact={total.окс_всего} plan={plan('оксвсего')} unit="шт" bounds={bounds}
+                was={было?.окс_всего} big>
           <Split rows={rows} pick={t => t.окс_всего} />
         </Metric>
-        <Metric label="АЗ" fact={total.окс_аз} plan={plan('оксаз')} unit="шт" bounds={bounds}>
+        <Metric label="АЗ" fact={total.окс_аз} plan={plan('оксаз')} unit="шт" bounds={bounds} was={было?.окс_аз}>
           <Split rows={rows} pick={t => t.окс_аз} />
         </Metric>
-        <Metric label="ВКИ" fact={total.окс_вки} plan={plan('оксвки')} unit="шт" bounds={bounds}>
+        <Metric label="ВКИ" fact={total.окс_вки} plan={plan('оксвки')} unit="шт" bounds={bounds} was={было?.окс_вки}>
           <Split rows={rows} pick={t => t.окс_вки} />
         </Metric>
         {/* Темп сравнивается с месячным планом целиком, без доли дней: он и
@@ -211,11 +314,21 @@ export default function RopDashboardPage({ team = null }) {
         к встречам, которые были раньше. Делить одно на другое нельзя — это разные сделки.
       </div>
 
+      <div className="fig-card">
+        <div className="fig-card-t">Как идём к плану</div>
+        <div className="fig-card-s">
+          накопленные передачи против равномерного плана; пунктир — линейка, а не прогноз
+        </div>
+        <Burnup data={cumulative(rows, bounds.from, bounds.to, plan('оксвсего'))}
+                plan={plan('оксвсего')} />
+      </div>
+
       <div className="portal-section-head">
         <h2 className="portal-section-title">Встречи</h2>
       </div>
       <div className="rop-metrics">
-        <Metric label="Проведено встреч" fact={total.встречи} plan={plan('встречи')} unit="шт" bounds={bounds} big>
+        <Metric label="Проведено встреч" fact={total.встречи} plan={plan('встречи')} unit="шт" bounds={bounds}
+                was={было?.встречи} big>
           <Split rows={rows} pick={t => t.встречи} />
         </Metric>
       </div>
@@ -243,6 +356,7 @@ export default function RopDashboardPage({ team = null }) {
         </Metric>
         <Metric
           label="Средний чек" fact={чек} plan={plan('среднийчек')} unit="₽" additive={false}
+          was={было && было.чек_сделок ? Math.round(было.чек_сумма / было.чек_сделок) : undefined}
           sub={`по ${formatNum(total.чек_сделок)} ${plural(total.чек_сделок, 'сделке', 'сделкам', 'сделкам')} с договором`}
         >
           <Split rows={rows} kind="money" pick={t => avgCheck(t)} />
@@ -261,6 +375,98 @@ export default function RopDashboardPage({ team = null }) {
           <h3>За этот период данных нет</h3>
           <p>Сделки загружены с 1 сентября 2026 года.</p>
         </div>
+      )}
+
+      {lost && lost.length > 0 && (() => {
+        const свои = byTeam(lost, team)
+        const по = new Map()
+        let всего = 0, безПричины = 0
+        for (const r of свои) {
+          const n = Number(r.сделок || 0)
+          всего += n
+          if (r.без_причины) безПричины += n
+          по.set(r.причина, (по.get(r.причина) || 0) + n)
+        }
+        if (!всего) return null
+        const список = [...по.entries()].sort((a, b) => b[1] - a[1])
+        return (
+          <>
+            <div className="portal-section-head">
+              <h2 className="portal-section-title">Потери и их причины</h2>
+              <p className="portal-section-note">
+                Отдельного поля «причина отказа» в воронке нет — причиной
+                служит стадия, на которой сделка закрылась. Поэтому «Встреча:
+                брак» это не причина, а её отсутствие: по таким сделкам потом
+                не восстановить, что произошло.
+              </p>
+            </div>
+            {безПричины > 0 && (
+              <div className="rop-alert">
+                <b>{formatNum(безПричины)}</b> из {formatNum(всего)}{' '}
+                {plural(всего, 'потери', 'потерь', 'потерь')} закрыты без указания
+                причины — это {Math.round((100 * безПричины) / всего)}%. Пока сделка
+                уходит в общую корзину, разговаривать с менеджером не о чем: сводка
+                есть, повода нет.
+              </div>
+            )}
+            <div className="rop-loss">
+              {список.map(([причина, n]) => (
+                <div key={причина} className="rop-loss-row">
+                  <span className="rop-loss-name">{причина}</span>
+                  <span className="rop-loss-bar">
+                    <span className={`rop-loss-fill ${причина.includes('брак') ? 'bad' : ''}`}
+                          style={{ width: `${Math.round((100 * n) / всего)}%` }} />
+                  </span>
+                  <span className="rop-loss-n">{formatNum(n)}</span>
+                  <span className="rop-loss-pct">{Math.round((100 * n) / всего)}%</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )
+      })()}
+
+      {pace && pace.length > 0 && (
+        <>
+          <div className="portal-section-head">
+            <h2 className="portal-section-title">Скорость этапов</h2>
+            <p className="portal-section-note">
+              Сколько дней сделка проводит на этапе, прежде чем уйти дальше.
+              Конверсия говорит, сколько дошло; скорость — почему медленно, и
+              ею руководитель управляет напрямую. Порог застоя в портфеле
+              берётся отсюда же: это срок, за который этап отпускает восемь
+              сделок из десяти.
+            </p>
+          </div>
+          <div className="table-wrap">
+            <table className="table-compact rop-table">
+              <thead>
+                <tr>
+                  <th>Этап</th>
+                  <th>Переходов</th>
+                  <th>Медиана, дней</th>
+                  <th>Восемь из десяти уходят за</th>
+                  <th>Доходят до ОКС</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...pace].sort((a, b) => b.переходов - a.переходов).map(p => (
+                  <tr key={p.stage_id}>
+                    <td>{p.этап || p.stage_id}</td>
+                    <td className="portal-num">{formatNum(p.переходов)}</td>
+                    <td className="portal-num">{formatNum(p.медиана_дней)}</td>
+                    <td className="portal-num">{formatNum(p.дней_у_80_процентов)}</td>
+                    <td className="portal-num">
+                      {p.доля_дошедших == null
+                        ? <span className="td-muted">мало истории</span>
+                        : <b>{formatNum(p.доля_дошедших)}%</b>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       <div className="rop-footer">
