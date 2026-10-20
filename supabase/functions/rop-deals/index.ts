@@ -284,14 +284,27 @@ Deno.serve(async (req) => {
     let done = false;
 
     // --- фаза 1: сделки ----------------------------------------------------
-    while (phase === "deals" && timeLeft() > 12_000) {
+    //
+    // ДВА ПРОХОДА, И ВТОРОЙ ВАЖНЕЕ ПЕРВОГО ДЛЯ ПОРТФЕЛЯ.
+    //
+    // Первый тянет всё, что создано в окне истории: по этим сделкам живёт
+    // поток — встречи, брак, передачи, средний чек.
+    //
+    // Второй тянет ВСЕ ОТКРЫТЫЕ сделки воронки, сколько бы им ни было лет.
+    // Без него портфель обрезан по дате: на день проверки из 299 открытых
+    // сделок 98 были созданы до начала окна — треть запаса, которой мы не
+    // видели. А запас как раз и состоит из того, что висит давно.
+    //
+    // Закрытые при этом остаются ограничены окном: тянуть их целиком
+    // значило бы каждый раз перечитывать всю историю воронки за годы ради
+    // сделок, которые больше не изменятся.
+    while ((phase === "deals" || phase === "deals_open") && timeLeft() > 12_000) {
       const json = await bitrix("crm.deal.list", {
-        filter: {
-          CATEGORY_ID: CATEGORY_ID,
-          ">=DATE_CREATE": `${DEALS_FROM}T00:00:00+03:00`,
-        },
+        filter: phase === "deals"
+          ? { CATEGORY_ID, ">=DATE_CREATE": `${DEALS_FROM}T00:00:00+03:00` }
+          : { CATEGORY_ID, CLOSED: "N" },
         select: [
-          "ID", "TITLE", "CATEGORY_ID", "STAGE_ID", "OPPORTUNITY",
+          "ID", "TITLE", "CATEGORY_ID", "STAGE_ID", "OPPORTUNITY", "CLOSED",
           "ASSIGNED_BY_ID", "LEAD_ID", "SOURCE_ID",
           "DATE_CREATE", "CLOSEDATE", "MOVED_TIME",
         ],
@@ -300,8 +313,9 @@ Deno.serve(async (req) => {
       });
       const page: any[] = json.result || [];
       if (page.length === 0) {
-        phase = "products";
-        await writeState(supabase, { phase, products_done: "0" });
+        phase = phase === "deals" ? "deals_open" : "products";
+        dealsStart = 0;
+        await writeState(supabase, { phase, deals_start: "0", products_done: "0" });
         break;
       }
 
@@ -336,6 +350,10 @@ Deno.serve(async (req) => {
         stage_id: String(d.STAGE_ID || ""),
         stage_name: stages.get(String(d.STAGE_ID || "")) ?? null,
         opportunity: num(d.OPPORTUNITY),
+        // Признак «сделка закрыта» берём у Битрикса, а не выводим из списка
+        // стадий: список меняется, и каждая новая отказная стадия тихо
+        // попадала бы в портфель как живая.
+        closed: String(d.CLOSED || "N") === "Y",
         assigned_by_id: d.ASSIGNED_BY_ID ? Number(d.ASSIGNED_BY_ID) : null,
         assigned_by_name: users.get(String(d.ASSIGNED_BY_ID || "")) ?? null,
         lead_id: d.LEAD_ID ? Number(d.LEAD_ID) : null,
@@ -353,8 +371,9 @@ Deno.serve(async (req) => {
       dealsUpserted += rows.length;
 
       if (!json.next) {
-        phase = "products";
-        await writeState(supabase, { phase, products_done: "0" });
+        phase = phase === "deals" ? "deals_open" : "products";
+        dealsStart = 0;
+        await writeState(supabase, { phase, deals_start: "0", products_done: "0" });
         break;
       }
       dealsStart = json.next;
