@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useAuth } from '../lib/auth.jsx'
+import { supabase } from '../lib/supabase.js'
 import RopDashboardPage from './RopDashboardPage.jsx'
 import RopManagersPage from './RopManagersPage.jsx'
 import RopPlansPage from './RopPlansPage.jsx'
@@ -33,6 +34,19 @@ export default function RopPage({ standalone = false, isAdmin = false }) {
   const { session, signOut } = useAuth()
   const [tab, setTab] = useState('dash')
 
+  // Отделов продаж два, и у каждого свой руководитель. База отдаёт роли rop
+  // только её собственный, поэтому список из одной строки означает «выбирать
+  // не из чего» — переключатель тогда не показывается вовсе.
+  const [teams, setTeams] = useState([])
+  const [team, setTeam] = useState(null)
+  useEffect(() => {
+    supabase.from('rop_portal_teams').select('*').order('sort_order')
+      .then(({ data }) => {
+        setTeams(data || [])
+        if (data && data.length) setTeam(data[0].отдел)
+      })
+  }, [])
+
   const tabs = isAdmin ? [...TABS, { id: 'plans', label: 'Планы' }] : TABS
 
   const body = (
@@ -47,10 +61,16 @@ export default function RopPage({ standalone = false, isAdmin = false }) {
             {t.label}
           </button>
         ))}
+        {teams.length > 1 && (
+          <select className="filter-select rop-team" value={team || ''}
+                  onChange={e => setTeam(e.target.value)}>
+            {teams.map(t => <option key={t.отдел} value={t.отдел}>{t.название}</option>)}
+          </select>
+        )}
       </div>
-      {tab === 'dash' && <RopDashboardPage />}
-      {tab === 'managers' && <RopManagersPage />}
-      {tab === 'plans' && isAdmin && <RopPlansPage />}
+      {tab === 'dash' && <RopDashboardPage team={team} />}
+      {tab === 'managers' && <RopManagersPage team={team} />}
+      {tab === 'plans' && isAdmin && <RopPlansPage team={team} />}
     </>
   )
 

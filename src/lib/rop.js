@@ -37,7 +37,7 @@ export const PLAN_METRICS = [
 ]
 
 export async function loadRopData(fromISO, toISO) {
-  const [daily, byManager, plans, stageSince, managers] = await Promise.all([
+  const [daily, byManager, plans, stageSince, managers, teams] = await Promise.all([
     fetchAllRows(() => supabase.from('rop_portal_daily').select('*')
       .gte('дата', fromISO).lte('дата', toISO)),
     fetchAllRows(() => supabase.from('rop_portal_manager').select('*')
@@ -45,8 +45,17 @@ export async function loadRopData(fromISO, toISO) {
     fetchAllRows(() => supabase.from('rop_portal_plans').select('*')),
     fetchAllRows(() => supabase.from('rop_portal_stage_since').select('*')),
     fetchAllRows(() => supabase.from('rop_portal_managers').select('*')),
+    fetchAllRows(() => supabase.from('rop_portal_teams').select('*').order('sort_order')),
   ])
-  return { daily, byManager, plans, stageSince, managers }
+  return { daily, byManager, plans, stageSince, managers, teams }
+}
+
+// Отбор по отделу. База и так отдаёт руководителю только его строки, но
+// сотруднику видны оба отдела, и смешивать их в одной цифре нельзя: это
+// разные люди с разными планами. Пустой team означает «всё, что пришло».
+export function byTeam(rows, team) {
+  if (!team) return rows
+  return rows.filter(r => r.отдел === team)
 }
 
 // --- Период ------------------------------------------------------------------
@@ -117,11 +126,12 @@ export function brakShare(t) {
 }
 
 // --- План/факт ---------------------------------------------------------------
-export function planFor(plans, periodISO, metric, managerName = null) {
+export function planFor(plans, periodISO, metric, managerName = null, team = null) {
   const month = periodISO.slice(0, 8) + '01'
   const row = plans.find(p =>
     String(p.period).slice(0, 10) === month &&
     p.metric === metric &&
+    (team ? p.отдел === team : true) &&
     (managerName ? p.manager_name === managerName : !p.manager_name))
   return row ? Number(row.value) : null
 }

@@ -37,7 +37,7 @@ function toValue(raw) {
   return Number.isFinite(n) ? n : null
 }
 
-export default function RopPlansPage() {
+export default function RopPlansPage({ team = null }) {
   const months = useMemo(() => recentMonths(12), [])
   // Планы ставят на текущий месяц чаще всего, но следующий тоже нужен —
   // иначе первого числа план «появляется» задним числом.
@@ -60,13 +60,17 @@ export default function RopPlansPage() {
   const [note, setNote] = useState('')
 
   async function load(p) {
+    if (!team) return
     setLoading(true); setError(''); setNote('')
     try {
+      // Состав и планы — строго одного отдела. Без фильтра по отделу в
+      // таблицу попали бы чужие менеджеры, а план отдела оказался бы один
+      // на двоих.
       const [{ data: mg, error: e1 }, { data: pl, error: e2 }] = await Promise.all([
         supabase.from('rop_managers').select('manager_name, sort_order')
-          .eq('active', true).order('sort_order'),
+          .eq('active', true).eq('team', team).order('sort_order'),
         supabase.from('rop_plans').select('id, period, manager_name, metric, value')
-          .eq('period', p),
+          .eq('period', p).eq('team', team),
       ])
       if (e1) throw e1
       if (e2) throw e2
@@ -87,7 +91,7 @@ export default function RopPlansPage() {
     }
   }
 
-  useEffect(() => { load(period) }, [period])
+  useEffect(() => { load(period) }, [period, team])
 
   const rows = useMemo(() => [
     { key: ОТДЕЛ, name: null, label: 'Отдел целиком' },
@@ -116,7 +120,7 @@ export default function RopPlansPage() {
     setSaving(true); setError(''); setNote('')
     try {
       const ins = changes.filter(c => c.op === 'insert')
-        .map(c => ({ period, manager_name: c.manager_name, metric: c.metric, value: c.value }))
+        .map(c => ({ period, team, manager_name: c.manager_name, metric: c.metric, value: c.value }))
       const del = changes.filter(c => c.op === 'delete').map(c => c.id)
 
       if (del.length) {
@@ -154,6 +158,7 @@ export default function RopPlansPage() {
   }
 
   const label = options.find(o => o.start === period)?.label || period
+  if (!team) return <div className="loading">Загрузка...</div>
 
   return (
     <div>

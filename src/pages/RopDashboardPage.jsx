@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { todayISO } from '../lib/dateContext.js'
 import {
   loadRopData, periodBounds, recentMonths, sumRows, avgCheck, brakShare,
-  planFor, runRate, planStatus, paceTarget, stageMissing, formatMoneyShort, GROUPS,
+  planFor, runRate, planStatus, paceTarget, stageMissing, formatMoneyShort, GROUPS, byTeam,
 } from '../lib/rop.js'
 import { formatNum, plural } from '../lib/helpers.js'
 
@@ -109,7 +109,7 @@ function Split({ rows, pick, kind = 'count' }) {
   )
 }
 
-export default function RopDashboardPage() {
+export default function RopDashboardPage({ team = null }) {
   const [mode, setMode] = useState('month')
   const [anchor, setAnchor] = useState(todayISO())
   const [from, setFrom] = useState(todayISO())
@@ -135,10 +135,10 @@ export default function RopDashboardPage() {
     return () => { cancelled = true }
   }, [bounds.from, bounds.to])
 
-  const rows = data?.daily || []
+  const rows = byTeam(data?.daily || [], team)
   const plans = data?.plans || []
   const total = useMemo(() => sumRows(rows), [rows])
-  const plan = (m) => planFor(plans, bounds.from, m)
+  const plan = (m) => planFor(plans, bounds.from, m, null, team)
 
   const чек = avgCheck(total)
   const брак = brakShare(total)

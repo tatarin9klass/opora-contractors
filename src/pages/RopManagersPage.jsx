@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { todayISO } from '../lib/dateContext.js'
 import {
-  loadRopData, periodBounds, recentMonths, planFor, planStatus, paceTarget,
+  loadRopData, periodBounds, recentMonths, planFor, planStatus, paceTarget, byTeam,
   formatMoneyShort, GROUPS,
 } from '../lib/rop.js'
 import { formatNum } from '../lib/helpers.js'
@@ -62,7 +62,7 @@ function Conv({ value, base, inverse }) {
   )
 }
 
-export default function RopManagersPage() {
+export default function RopManagersPage({ team = null }) {
   const [mode, setMode] = useState('month')
   const [anchor, setAnchor] = useState(todayISO())
   const [from, setFrom] = useState(todayISO())
@@ -90,16 +90,16 @@ export default function RopManagersPage() {
   // которой красится конверсия.
   const dept = useMemo(() => {
     const t = { всего: blank(), группы: new Map() }
-    for (const r of data?.byManager || []) {
+    for (const r of byTeam(data?.byManager || [], team)) {
       add(t.всего, r)
       if (!t.группы.has(r.группа)) t.группы.set(r.группа, blank())
       add(t.группы.get(r.группа), r)
     }
     return t
-  }, [data])
+  }, [data, team])
 
   const byManager = useMemo(() => {
-    const rows = data?.byManager || []
+    const rows = byTeam(data?.byManager || [], team)
     const m = new Map()
     for (const r of rows) {
       const key = r.менеджер
@@ -115,7 +115,7 @@ export default function RopManagersPage() {
       add(cur.группы.get(r.группа), r)
     }
     return [...m.values()].sort((a, b) => a.sort - b.sort)
-  }, [data])
+  }, [data, team])
 
   const plans = data?.plans || []
 
@@ -183,8 +183,8 @@ export default function RopManagersPage() {
               {byManager.map(m => {
                 const t = m.всего
                 const d = dept.всего
-                const planВстречи = planFor(plans, bounds.from, 'встречи', m.менеджер)
-                const planОкс = planFor(plans, bounds.from, 'оксвсего', m.менеджер)
+                const planВстречи = planFor(plans, bounds.from, 'встречи', m.менеджер, team)
+                const planОкс = planFor(plans, bounds.from, 'оксвсего', m.менеджер, team)
                 return (
                   <React.Fragment key={m.менеджер}>
                     <tr onClick={() => setOpenRow(openRow === m.менеджер ? null : m.менеджер)}

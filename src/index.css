@@ -662,6 +662,11 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 }
 .rop-tab:hover { color: var(--text-secondary); }
 .rop-tab.active { color: var(--green-dark); border-bottom-color: var(--green-primary); }
+/* Переключатель отдела стоит в той же строке, что и вкладки, но прижат
+   вправо: это выбор не раздела, а того, чьи числа смотрим, и путать его с
+   вкладками нельзя. У руководителя отдела он не появляется — база отдаёт
+   ему один отдел. */
+.rop-team { margin-left: auto; align-self: center; margin-bottom: 6px; max-width: 220px; }
 
 /* Плитки план/факт */
 .rop-metrics {
