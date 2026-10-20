@@ -215,3 +215,55 @@ export function formatMoneyShort(v) {
   if (v == null) return '—'
   return new Intl.NumberFormat('ru-RU').format(Math.round(v)) + ' ₽'
 }
+
+// ============================================================================
+// Портфель: что у менеджера сейчас в работе.
+//
+// Поток отвечает на «как сработали», портфель — на «есть ли чем работать
+// дальше». Это разные вопросы, и мерить их одной витриной нельзя: поток
+// живёт событиями в периоде, портфель — снимком на сегодня.
+// ============================================================================
+export async function loadPortfolio() {
+  const [portfolio, stuck, outside] = await Promise.all([
+    fetchAllRows(() => supabase.from('rop_portal_portfolio').select('*')),
+    fetchAllRows(() => supabase.from('rop_portal_stuck').select('*')
+      .order('дней_без_движения', { ascending: false })),
+    fetchAllRows(() => supabase.from('rop_portal_outside').select('*')),
+  ])
+  return { portfolio, stuck, outside }
+}
+
+// Этапы портфеля в порядке движения сделки. Порядок не алфавитный и не
+// случайный: руководитель читает строку слева направо как путь, и если
+// «договор» окажется раньше «ИКП», таблица начнёт врать глазу.
+export const PORTFOLIO_STAGES = [
+  { id: 'C34:NEW', label: 'Встреча' },
+  { id: 'C34:PREPARATION', label: 'ИКП' },
+  { id: 'C34:PREPAYMENT_INVOIC', label: 'Договор' },
+  { id: 'C34:UC_1KT09S', label: 'Оплата' },
+]
+
+export function portfolioByManager(rows) {
+  const m = new Map()
+  for (const r of rows) {
+    const key = r.менеджер
+    if (!m.has(key)) {
+      m.set(key, {
+        менеджер: key, работает: r.работает !== false,
+        всего: 0, залежалось: 0, приёмка: 0, ожидаемо: 0, без_суммы: 0,
+        чек_сумма: 0, чек_сделок: 0, этапы: {},
+      })
+    }
+    const c = m.get(key)
+    const n = Number(r.сделок || 0)
+    if (r.состояние === 'на приёмке') c.приёмка += n
+    else c.всего += n
+    c.залежалось += Number(r.залежалось || 0)
+    c.ожидаемо += Number(r.ожидаемо_окс || 0)
+    c.без_суммы += Number(r.без_суммы || 0)
+    c.чек_сумма += Number(r.чек_сумма || 0)
+    c.чек_сделок += Number(r.чек_сделок || 0)
+    c.этапы[r.stage_id] = (c.этапы[r.stage_id] || 0) + n
+  }
+  return [...m.values()].sort((a, b) => (b.всего + b.приёмка) - (a.всего + a.приёмка))
+}

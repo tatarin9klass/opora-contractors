@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase.js'
 import RopDashboardPage from './RopDashboardPage.jsx'
 import RopManagersPage from './RopManagersPage.jsx'
 import RopPlansPage from './RopPlansPage.jsx'
+import RopPortfolioPage from './RopPortfolioPage.jsx'
 
 // ============================================================================
 // Кабинет руководителя отдела продаж.
@@ -27,6 +28,7 @@ import RopPlansPage from './RopPlansPage.jsx'
 
 const TABS = [
   { id: 'dash', label: 'Общий дашборд' },
+  { id: 'portfolio', label: 'Портфель' },
   { id: 'managers', label: 'Менеджеры' },
 ]
 
@@ -69,6 +71,7 @@ export default function RopPage({ standalone = false, isAdmin = false }) {
         )}
       </div>
       {tab === 'dash' && <RopDashboardPage team={team} />}
+      {tab === 'portfolio' && <RopPortfolioPage team={team} />}
       {tab === 'managers' && <RopManagersPage team={team} />}
       {tab === 'plans' && isAdmin && <RopPlansPage team={team} />}
     </>
