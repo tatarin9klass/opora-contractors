@@ -194,7 +194,7 @@ export default function RopManagersPage({ team = null }) {
                 <th>ИКП→договор</th>
                 <th>Оплата</th>
                 <th>договор→оплата</th>
-                <th>В ОКС</th>
+                <th>Договоры БФЛ</th>
                 <th>Чек БФЛ</th>
                 <th className="rop-sep">В работе</th>
                 <th>Залежалось</th>
@@ -230,9 +230,9 @@ export default function RopManagersPage({ team = null }) {
                       <td className="portal-num">{formatNum(t.оплата)}</td>
                       <td className="portal-num"><Conv value={pct(t.оплата, t.договор_без_оплаты)} base={pct(d.оплата, d.договор_без_оплаты)} /></td>
                       <td className="portal-num">
-                        {formatNum(t.окс_всего)}
+                        {formatNum(t.окс_бфл)}
                         {planОкс != null && (
-                          <span className={`rop-plan ${planStatus(t.окс_всего, paceTarget(planОкс, bounds.from, bounds.to))}`}>
+                          <span className={`rop-plan ${planStatus(t.окс_бфл, paceTarget(planОкс, bounds.from, bounds.to))}`}>
                             /{formatNum(planОкс)}
                           </span>
                         )}
@@ -286,7 +286,7 @@ export default function RopManagersPage({ team = null }) {
                           <td className="portal-num"><Conv value={pct(s.договор_без_оплаты, s.икп)} base={pct(b.договор_без_оплаты, b.икп)} /></td>
                           <td className="portal-num">{formatNum(s.оплата)}</td>
                           <td className="portal-num"><Conv value={pct(s.оплата, s.договор_без_оплаты)} base={pct(b.оплата, b.договор_без_оплаты)} /></td>
-                          <td className="portal-num">{formatNum(s.окс_всего)}</td>
+                          <td className="portal-num">{formatNum(s.окс_бфл)}</td>
                           <td className="portal-num">
                             {s.чек_бфл_сделок
                               ? formatMoneyShort(s.чек_бфл_сумма / s.чек_бфл_сделок)
@@ -312,10 +312,11 @@ export default function RopManagersPage({ team = null }) {
         предыдущий, поэтому конверсия иногда больше ста процентов — такие
         числа помечены. Цвет конверсии — это сравнение с отделом за тот же
         период, а не с абсолютной нормой: нормы у нас нет, а порог, взятый с
-        потолка, оценивал бы людей по выдуманному числу. «В ОКС» идёт без
-        конверсии: передача оформляется отдельной карточкой и к встрече этого
-        периода не относится. «Чек БФЛ» — только по сделкам с продуктом
-        банкротства, без ФПА. План рядом с фактом месячный, а цвет у него —
+        потолка, оценивал бы людей по выдуманному числу. «Договоры БФЛ» идут
+        без конверсии: договор оформляется отдельной карточкой и к встрече
+        этого периода не относится. Договор считается банкротным по депозиту
+        АУ среди позиций, а не по названию услуги. «Чек БФЛ» — по тем же
+        сделкам, без ФПА. План рядом с фактом месячный, а цвет у него —
         по темпу на сегодняшний день. Две последние колонки за линией — это не
         период, а снимок на сегодня: сколько сделок у человека в работе и
         сколько из них стоит дольше нормы своего этапа. Разбор по ним — на
@@ -326,7 +327,7 @@ export default function RopManagersPage({ team = null }) {
 }
 
 const KEYS = ['встречи', 'брак', 'икп', 'договор_без_оплаты', 'оплата',
-  'окс_всего', 'окс_аз', 'окс_вки', 'чек_бфл_сумма', 'чек_бфл_сделок']
+  'окс_всего', 'окс_бфл', 'окс_аз', 'окс_вки', 'чек_бфл_сумма', 'чек_бфл_сделок']
 
 function blank() {
   const o = {}

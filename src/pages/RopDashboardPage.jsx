@@ -3,7 +3,7 @@ import { todayISO } from '../lib/dateContext.js'
 import {
   loadRopData, periodBounds, recentMonths, sumRows, avgCheck, brakShare,
   planFor, runRate, planStatus, paceTarget, stageMissing, formatMoneyShort, GROUPS, byTeam,
-  prevBounds, cumulative, loadDeals, loadLost,
+  prevBounds, dailySeries, quotaPerDay, loadDeals, loadLost,
 } from '../lib/rop.js'
 import { formatNum, plural } from '../lib/helpers.js'
 
@@ -97,63 +97,78 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
 // среднего чека доля от суммы средних не значит ничего, а у доли брака
 // складывать проценты групп просто нельзя.
 
-// Накопленная линия факта против равномерного плана.
+// Договоры по дням против дневной нормы.
 //
-// ЭТО ГЛАВНЫЙ ГРАФИК ОТДЕЛА ПРОДАЖ, и до сих пор его не было. План против
-// факта одной цифрой — это точка: «28 из 40». Точка не отвечает на вопрос,
-// который руководитель задаёт каждый день: успеваем или нет. Линия
-// отвечает — по ней видно, в какой день разошлись и растёт ли разрыв.
+// ПОЧЕМУ СТОЛБИКИ, А НЕ ЛИНИЯ. Договор — событие, а не измерение. Линия,
+// протянутая между вторником и четвергом, обещает, что в среду было
+// что-то среднее, хотя в среду не было ничего. Столбик показывает ровно
+// то, что случилось в этот день, и пустой день выглядит пустым.
 //
-// План рисуется равномерным, хотя продажи неравномерны: ровная линия нужна
-// как линейка, а не как прогноз. Отклонение от неё и есть сообщение.
-function Burnup({ data, plan }) {
-  const W = 760, H = 200, L = 36, R = 54, T = 10, B = 22
-  const hi = Math.max(plan || 0, ...data.map(d => d.факт || 0), 1)
-  const n = data.length
-  const X = i => L + ((W - L - R) * i) / Math.max(1, n - 1)
-  const Y = v => T + (H - T - B) - ((H - T - B) * v) / hi
-  const line = (key) => {
-    const pts = data.map((d, i) => [X(i), d[key] == null ? null : Y(d[key])])
-      .filter(p => p[1] != null)
-    return pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ')
-  }
-  const last = [...data].reverse().find(d => d.факт != null)
-  const lastI = last ? data.indexOf(last) : 0
-  const отставание = last && last.план != null ? last.факт - last.план : null
+// ЛИНИЯ НОРМЫ ГОРИЗОНТАЛЬНА — это план, разложенный на дни поровну. Она не
+// прогноз, а линейка: по ней видно, какие дни вытягивают месяц, а какие
+// проваливают, не считая ничего в уме.
+//
+// Чего этот график не показывает — отставания накопленным итогом. За этим
+// стоит плитка «Квота на день»: она и говорит, сколько надо делать дальше.
+function DailyPlan({ дни, норма }) {
+  const W = 760, H = 210, L = 34, R = 46, T = 18, B = 30
+  const n = дни.length
+  const hi = Math.max(норма || 0, ...дни.map(d => d.факт || 0), 1)
+  const top = hi * 1.2
+  const bw = (W - L - R) / Math.max(1, n)
+  const X = i => L + bw * i
+  const Y = v => T + (H - T - B) - ((H - T - B) * v) / top
+
+  // Деления только целые: половины договоров не бывает.
+  const step = Math.max(1, Math.ceil(hi / 4))
+  const ticks = []
+  for (let v = 0; v <= hi; v += step) ticks.push(v)
+
+  // Подписи дат не на каждый столбик: за месяц они слипаются. Шаг
+  // подбирается так, чтобы подписей вышло около восьми.
+  const шаг = Math.max(1, Math.round(n / 8))
+  const dd = iso => iso.slice(8) + '.' + iso.slice(5, 7)
+
+  // Ширина столбика ограничена сверху: на периоде в один-два дня доля от
+  // полосы дала бы плиту в треть экрана, и один договор выглядел бы как
+  // достижение месяца.
+  const ш = Math.max(1.5, Math.min(30, bw * 0.64))
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="rop-burnup">
-      {[0, 0.5, 1].map(f => (
-        <g key={f}>
-          <line x1={L} y1={Y(hi * f)} x2={W - R} y2={Y(hi * f)} stroke="#e4ebe2" />
-          <text x={L - 6} y={Y(hi * f) + 3.5} fontSize="9.5" fill="#6b7670" textAnchor="end">
-            {Math.round(hi * f)}
-          </text>
+      {ticks.map(v => (
+        <g key={v}>
+          <line x1={L} y1={Y(v)} x2={W - R} y2={Y(v)} stroke="#e4ebe2" />
+          <text x={L - 6} y={Y(v) + 3.5} fontSize="9.5" fill="#6b7670" textAnchor="end">{v}</text>
         </g>
       ))}
-      {data.map((d, i) => (i % 7 === 0 ? (
-        <text key={d.дата} x={X(i)} y={H - 6} fontSize="9" fill="#6b7670" textAnchor="middle">
-          {d.дата.slice(8)}
-        </text>
+      <text x={L - 6} y={T - 6} fontSize="9" fill="#6b7670" textAnchor="end">шт</text>
+
+      {дни.map((d, i) => (d.факт ? (
+        <g key={d.дата}>
+          <rect x={X(i) + (bw - ш) / 2} y={Y(d.факт)} width={ш}
+                height={Math.max(1, Y(0) - Y(d.факт))} rx="1.5" fill="#1f6f3f" />
+          <text x={X(i) + bw / 2} y={Y(d.факт) - 4} fontSize="9" fontWeight="600"
+                fill="#1a1f1c" textAnchor="middle">{d.факт}</text>
+        </g>
       ) : null))}
-      {plan != null && (
-        <path d={line('план')} fill="none" stroke="#8d968f" strokeWidth="1.5" strokeDasharray="4 4" />
-      )}
-      <path d={line('факт')} fill="none" stroke="#1f6f3f" strokeWidth="2.5" strokeLinejoin="round" />
-      {last && (
+
+      <line x1={L} y1={Y(0)} x2={W - R} y2={Y(0)} stroke="#c9d3c7" />
+
+      {норма != null && (
         <>
-          <circle cx={X(lastI)} cy={Y(last.факт)} r="4.5" fill="#1f6f3f" stroke="#fff" strokeWidth="2" />
-          <text x={X(lastI) + 9} y={Y(last.факт) + 4} fontSize="11.5" fontWeight="700" fill="#1a1f1c">
-            {last.факт}
+          <line x1={L} y1={Y(норма)} x2={W - R} y2={Y(норма)}
+                stroke="#eb6834" strokeWidth="1.8" strokeDasharray="5 3" />
+          <text x={W - R + 5} y={Y(норма) + 3.5} fontSize="10.5" fontWeight="700" fill="#eb6834">
+            {formatNum(Math.round(норма * 10) / 10)}
           </text>
-          {отставание != null && отставание !== 0 && (
-            <text x={X(lastI) + 9} y={Y(last.факт) + 17} fontSize="9.5"
-                  fill={отставание > 0 ? '#1f6f3f' : '#d93025'}>
-              {отставание > 0 ? '+' : ''}{отставание} к графику
-            </text>
-          )}
         </>
       )}
+
+      {дни.map((d, i) => (i % шаг === 0 ? (
+        <text key={d.дата} x={X(i) + bw / 2} y={H - 8} fontSize="8.5" fill="#6b7670"
+              textAnchor="middle">{dd(d.дата)}</text>
+      ) : null))}
     </svg>
   )
 }
@@ -244,7 +259,12 @@ export default function RopDashboardPage({ team = null }) {
   )
   const чек = avgCheck(total)
   const брак = brakShare(total)
-  const rr = runRate(total.окс_всего, bounds.from, bounds.to)
+  // Темп и квота считаются от договоров БФЛ: это та цифра, на которую
+  // заведён план. Окс_всего остаётся в данных, но план-факт по нему больше
+  // не строится — в нём смешаны БФЛ, АЗ и ВКИ, а продаются они порознь.
+  const rr = runRate(total.окс_бфл, bounds.from, bounds.to)
+  const квота = quotaPerDay(plan('оксвсего'), total.окс_бфл, bounds.to)
+  const ряд = dailySeries(rows, bounds.from, bounds.to, plan('оксвсего'))
 
   if (loading && !data) return <div className="loading">Загрузка...</div>
 
@@ -284,13 +304,18 @@ export default function RopDashboardPage({ team = null }) {
 
       {/* ---- Основное ---- */}
       <div className="portal-section-head">
-        <h2 className="portal-section-title">Передано в ОКС</h2>
+        <h2 className="portal-section-title">Заключённые договоры</h2>
       </div>
 
       <div className="rop-metrics">
-        <Metric label="Все" fact={total.окс_всего} plan={plan('оксвсего')} unit="шт" bounds={bounds}
-                was={было?.окс_всего} big>
-          <Split rows={rows} pick={t => t.окс_всего} />
+        {/* БФЛ опознаётся по депозиту АУ среди позиций сделки, а не по
+            названию услуги: реструктуризация — тоже банкротство, и депозит
+            у неё тоже есть. АЗ и ВКИ продаются поверх договора, поэтому
+            сделка может попасть и в БФЛ, и в АЗ — три плитки намеренно не
+            складываются в одну сумму. */}
+        <Metric label="БФЛ" fact={total.окс_бфл} plan={plan('оксвсего')} unit="шт" bounds={bounds}
+                was={было?.окс_бфл} big>
+          <Split rows={rows} pick={t => t.окс_бфл} />
         </Metric>
         <Metric label="АЗ" fact={total.окс_аз} plan={plan('оксаз')} unit="шт" bounds={bounds} was={было?.окс_аз}>
           <Split rows={rows} pick={t => t.окс_аз} />
@@ -305,22 +330,34 @@ export default function RopDashboardPage({ team = null }) {
             которой в нём нет. */}
         <Metric
           label="Runrate" fact={rr} plan={plan('оксвсего')} unit="шт" additive={false}
-          sub={rr === total.окс_всего ? 'период закрыт' : 'при текущем темпе'}
+          sub={rr === total.окс_бфл ? 'период закрыт' : 'при текущем темпе'}
+        />
+        {/* Квота отвечает на единственный вопрос, который остаётся после
+            плана и факта: сколько надо делать начиная с сегодня. В отличие
+            от нормы на графике она растёт с каждым отставанием, поэтому
+            плана под ней нет — она сама и есть требование. */}
+        <Metric
+          label="Квота на день" fact={квота && квота.квота} unit="шт"
+          sub={
+            квота == null ? 'план не задан'
+              : квота.дней === 0 ? 'период закрыт'
+              : квота.осталось === 0 ? 'план выполнен'
+              : `осталось ${formatNum(квота.осталось)} за ${formatNum(квота.дней)} ${plural(квота.дней, 'день', 'дня', 'дней')}`
+          }
         />
       </div>
 
       <div className="rop-note">
-        Передача оформляется отдельной карточкой, поэтому передачи периода относятся
+        Договор оформляется отдельной карточкой, поэтому договоры периода относятся
         к встречам, которые были раньше. Делить одно на другое нельзя — это разные сделки.
       </div>
 
       <div className="fig-card">
-        <div className="fig-card-t">Как идём к плану</div>
+        <div className="fig-card-t">Договоры БФЛ по дням</div>
         <div className="fig-card-s">
-          накопленные передачи против равномерного плана; пунктир — линейка, а не прогноз
+          столбики — заключено за день, штук; оранжевая линия — дневная норма (план ÷ дней в периоде)
         </div>
-        <Burnup data={cumulative(rows, bounds.from, bounds.to, plan('оксвсего'))}
-                plan={plan('оксвсего')} />
+        <DailyPlan дни={ряд.дни} норма={ряд.норма} />
       </div>
 
       <div className="portal-section-head">

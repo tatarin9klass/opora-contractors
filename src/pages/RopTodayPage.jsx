@@ -54,8 +54,12 @@ export default function RopTodayPage({ team = null, onGoTo }) {
   const пф = useMemo(() => portfolioByManager(byTeam(pf?.portfolio || [], team)), [pf, team])
   const ожидаемо = useMemo(() => пф.reduce((a, m) => a + m.ожидаемо, 0), [пф])
 
+  // План «оксвсего» — это план по заключённым договорам БФЛ, и факт под ним
+  // считается так же. Раньше здесь стояло окс_всего, в котором смешаны БФЛ,
+  // АЗ и ВКИ: строка состояния показывала цифру больше той, на которую
+  // заведён план, и месяц выглядел лучше, чем шёл.
   const планОкс = flow ? planFor(flow.plans || [], month.from, 'оксвсего', null, team) : null
-  const фактОкс = flow ? sumRows(byTeam(flow.daily || [], team)).окс_всего : 0
+  const фактОкс = flow ? sumRows(byTeam(flow.daily || [], team)).окс_бфл : 0
   const остаток = планОкс == null ? null : Math.max(0, планОкс - фактОкс)
   const темп = runRate(фактОкс, month.from, month.to)
 
@@ -79,7 +83,7 @@ export default function RopTodayPage({ team = null, onGoTo }) {
       <div className="rop-status">
         <div className="rop-status-main">
           <b>{formatNum(фактОкс)}</b> из {планОкс == null ? '—' : formatNum(планОкс)}
-          {' '}{plural(фактОкс, 'передача', 'передачи', 'передач')} за месяц
+          {' '}{plural(фактОкс, 'договор', 'договора', 'договоров')} БФЛ за месяц
         </div>
         <div className="rop-status-sub">
           день {деньМесяца} из {всегоДней}

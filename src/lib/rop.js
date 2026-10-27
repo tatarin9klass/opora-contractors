@@ -28,9 +28,12 @@ export const GROUPS = [
 // Метрики, у которых есть план. Брак — единственная с обратным знаком:
 // у неё зелёная зона снизу, и путать её с остальными нельзя.
 export const PLAN_METRICS = [
-  { id: 'оксвсего', label: 'Передано в ОКС', unit: 'шт' },
-  { id: 'оксаз', label: 'Передано в ОКС — АЗ', unit: 'шт' },
-  { id: 'оксвки', label: 'Передано в ОКС — ВКИ', unit: 'шт' },
+  // Ключи метрик остались прежними: по ним уже заведены планы, и
+  // переименование ради красоты обнулило бы их. Изменилось то, что считает
+  // факт под планом «оксвсего» — теперь это заключённые договоры БФЛ.
+  { id: 'оксвсего', label: 'Договоры БФЛ', unit: 'шт' },
+  { id: 'оксаз', label: 'Договоры АЗ', unit: 'шт' },
+  { id: 'оксвки', label: 'Договоры ВКИ', unit: 'шт' },
   { id: 'встречи', label: 'Встречи', unit: 'шт' },
   { id: 'среднийчек', label: 'Средний чек', unit: '₽' },
   { id: 'бракнорма', label: 'Брак, норма не выше', unit: '%', inverse: true },
@@ -412,28 +415,41 @@ export function prevBounds(mode, from, to) {
   return { from: addDaysISO(from, -days), to: addDaysISO(from, -1) }
 }
 
-// Накопленный факт по дням и равномерный план к тому же дню. Руководителю
-// нужна не точка «28 из 40», а траектория: по ней видно, в какой день
-// отстали и успевают ли нагнать.
-export function cumulative(rows, from, to, plan, pick = r => r.окс_всего) {
+// Факт по дням и дневная норма. Ряд строится на весь период, а не только
+// по дням с результатом: пустой день — это тоже факт, и если его выбросить,
+// график покажет ровную работу там, где была неделя простоя.
+//
+// Будущие дни остаются null, а не нулём, — ноль означал бы «сделали ноль»,
+// хотя день ещё не наступил.
+export function dailySeries(rows, from, to, plan, pick = r => r.окс_бфл) {
   const byDay = new Map()
   for (const r of rows) {
     const d = String(r.дата).slice(0, 10)
     byDay.set(d, (byDay.get(d) || 0) + Number(pick(r) || 0))
   }
-  const out = []
   const total = Math.round(
     (new Date(to + 'T12:00:00Z') - new Date(from + 'T12:00:00Z')) / 86400000) + 1
-  let acc = 0
   const today = todayISO()
+  const out = []
   for (let i = 0; i < total; i++) {
     const d = addDaysISO(from, i)
-    acc += byDay.get(d) || 0
-    out.push({
-      дата: d,
-      факт: d <= today ? acc : null,
-      план: plan == null ? null : Math.round((plan * (i + 1)) / total),
-    })
+    out.push({ дата: d, факт: d <= today ? (byDay.get(d) || 0) : null })
   }
-  return out
+  return { дни: out, норма: plan == null ? null : plan / total }
+}
+
+// Квота: сколько договоров надо заключать каждый оставшийся день, чтобы
+// выйти на план. (план − факт) ÷ оставшиеся календарные дни, сегодняшний
+// день считается оставшимся — он ещё не кончился.
+//
+// Отличие от дневной нормы на графике в том, что норма не меняется весь
+// месяц, а квота растёт с каждым отставанием. Поэтому она и стоит плиткой
+// рядом с фактом, а не линией на графике.
+export function quotaPerDay(plan, fact, toISO, today = todayISO()) {
+  if (plan == null) return null
+  const осталосьДней = Math.round(
+    (new Date(toISO + 'T12:00:00Z') - new Date(today + 'T12:00:00Z')) / 86400000) + 1
+  if (осталосьДней <= 0) return { дней: 0, осталось: Math.max(0, plan - fact), квота: null }
+  const осталось = Math.max(0, plan - fact)
+  return { дней: осталосьДней, осталось, квота: Math.round((осталось / осталосьДней) * 10) / 10 }
 }
