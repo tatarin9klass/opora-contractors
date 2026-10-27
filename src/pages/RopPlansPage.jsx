@@ -2,29 +2,31 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { todayISO } from '../lib/dateContext.js'
 import { recentMonths, PLAN_METRICS } from '../lib/rop.js'
+import { formatNum, plural } from '../lib/helpers.js'
 
 // ============================================================================
 // Планы отдела продаж на месяц.
 //
-// ПЛАН СТАВИТСЯ РУКОВОДИТЕЛЕМ НАПРАВЛЕНИЯ, А НЕ РОПом. Поэтому экран живёт у
-// админа: РОП свои планы видит, но не правит. Так же устроены цели
-// подрядчиков, и причина та же — план, который можно переписать задним
-// числом, перестаёт быть планом.
+// ПЛАН СТАВИТ РУКОВОДИТЕЛЬ ОТДЕЛА — сам, по своим людям. Право проверяется в
+// базе, а не в интерфейсе: политика на rop_plans пускает РОПа к строкам
+// менеджеров своего отдела и никуда больше (20261020_rop_plans_by_rop.sql).
 //
-// СТРОКА «ОТДЕЛ» — ЭТО НЕ СУММА СТРОК МЕНЕДЖЕРОВ. Она хранится отдельно
-// (manager_name = NULL) и может быть больше суммы: руководитель закладывает
-// запас. Складывать за него мы не вправе, поэтому и не складываем — но
-// подсказываем сумму рядом, чтобы расхождение было видно сразу.
+// ПЛАН НА ОТДЕЛ НЕ ЗАДАЁТСЯ — ОН СКЛАДЫВАЕТСЯ. Раньше он хранился отдельной
+// строкой и мог не совпадать с раскладкой по людям: руководитель закладывал
+// запас. На практике расхождение только путало — на первом экране стояло
+// одно число, в таблице менеджеров складывалось другое, и какое настоящее,
+// было непонятно. Теперь настоящее одно: то, что разложено на людей.
 //
-// ПУСТАЯ КЛЕТКА — ЭТО ОТСУТСТВИЕ ПЛАНА, А НЕ НОЛЬ. На дашборде по такой
-// метрике не будет ни плана, ни оценки «не выполнено». Ноль означал бы, что
+// ПЛАН СТАВИТСЯ ТОЛЬКО ПО ДОГОВОРАМ БФЛ. План, разложенный на шесть метрик,
+// перестаёт быть обязательством и становится анкетой.
+//
+// ПУСТАЯ КЛЕТКА — ЭТО ОТСУТСТВИЕ ПЛАНА, А НЕ НОЛЬ. На первом экране по
+// такому месяцу не будет ни плана, ни квоты, ни оценки. Ноль означал бы, что
 // план поставлен и равен нулю, то есть выполнен всегда.
 // ============================================================================
 
-const ОТДЕЛ = '__отдел__'
-
 function cellKey(manager, metric) {
-  return `${manager || ОТДЕЛ}|${metric}`
+  return `${manager}|${metric}`
 }
 
 // В форме живут строки, а не числа: пустая строка должна отличаться от нуля,
@@ -37,7 +39,7 @@ function toValue(raw) {
   return Number.isFinite(n) ? n : null
 }
 
-export default function RopPlansPage({ team = null, isAdmin = false }) {
+export default function RopPlansPage({ team = null }) {
   const months = useMemo(() => recentMonths(12), [])
   // Планы ставят на текущий месяц чаще всего, но следующий тоже нужен —
   // иначе первого числа план «появляется» задним числом.
@@ -64,8 +66,7 @@ export default function RopPlansPage({ team = null, isAdmin = false }) {
     setLoading(true); setError(''); setNote('')
     try {
       // Состав и планы — строго одного отдела. Без фильтра по отделу в
-      // таблицу попали бы чужие менеджеры, а план отдела оказался бы один
-      // на двоих.
+      // таблицу попали бы чужие менеджеры.
       const [{ data: mg, error: e1 }, { data: pl, error: e2 }] = await Promise.all([
         supabase.from('rop_managers').select('manager_name, sort_order')
           .eq('active', true).eq('team', team).order('sort_order'),
@@ -78,6 +79,9 @@ export default function RopPlansPage({ team = null, isAdmin = false }) {
       const map = {}
       const f = {}
       for (const row of pl || []) {
+        // Старые строки отдела (manager_name = NULL) больше не читаются и не
+        // правятся: план отдела теперь складывается из планов менеджеров.
+        if (!row.manager_name) continue
         const k = cellKey(row.manager_name, row.metric)
         map[k] = { id: row.id, value: Number(row.value) }
         f[k] = String(Number(row.value))
@@ -93,27 +97,24 @@ export default function RopPlansPage({ team = null, isAdmin = false }) {
 
   useEffect(() => { load(period) }, [period, team])
 
-  const rows = useMemo(() => [
-    { key: ОТДЕЛ, name: null, label: 'Отдел целиком' },
-    ...managers.map(m => ({ key: m.manager_name, name: m.manager_name, label: m.manager_name })),
-  ], [managers])
-
   // Что изменилось. Считается на каждый рендер и стоит копейки: клеток
-  // меньше полусотни.
+  // меньше десятка.
   const changes = useMemo(() => {
     const out = []
-    for (const r of rows) {
+    for (const m of managers) {
       for (const met of PLAN_METRICS) {
-        const k = cellKey(r.name, met.id)
+        const k = cellKey(m.manager_name, met.id)
         const was = saved[k]
         const now = toValue(form[k])
         if (was && now == null) out.push({ op: 'delete', id: was.id, k })
         else if (was && now !== was.value) out.push({ op: 'update', id: was.id, value: now, k })
-        else if (!was && now != null) out.push({ op: 'insert', manager_name: r.name, metric: met.id, value: now, k })
+        else if (!was && now != null) {
+          out.push({ op: 'insert', manager_name: m.manager_name, metric: met.id, value: now, k })
+        }
       }
     }
     return out
-  }, [rows, saved, form])
+  }, [managers, saved, form])
 
   async function save() {
     if (!changes.length) return
@@ -145,13 +146,13 @@ export default function RopPlansPage({ team = null, isAdmin = false }) {
     }
   }
 
-  // Сумма по менеджерам — только подсказка. Штука, по которой видно, что
-  // план отдела разложен не полностью.
-  function managersSum(metric) {
+  // Сумма по менеджерам и есть план отдела. Считается прямо из полей, а не
+  // из сохранённого, — чтобы итог менялся, пока цифры набирают, и было
+  // видно, к чему ведёт правка.
+  function сумма(metric) {
     let s = 0, n = 0
-    for (const r of rows) {
-      if (!r.name) continue
-      const v = toValue(form[cellKey(r.name, metric)])
+    for (const m of managers) {
+      const v = toValue(form[cellKey(m.manager_name, metric)])
       if (v != null) { s += v; n += 1 }
     }
     return n ? s : null
@@ -165,12 +166,10 @@ export default function RopPlansPage({ team = null, isAdmin = false }) {
       <div className="portal-section-head">
         <h2 className="portal-section-title">Планы на месяц</h2>
         <p className="portal-section-note">
-          {isAdmin
-            ? 'План на отдел ставите вы, раскладку по менеджерам может менять руководитель отдела. '
-            : 'План на отдел ставит руководитель направления — эта строка заблокирована. Раскладка по менеджерам ваша. '}
-          Пустая клетка — плана нет: на дашборде по такой метрике не будет ни
-          плана, ни оценки. «Брак» задаётся нормой в процентах и читается как
-          «не выше», остальные метрики — как «не ниже».
+          План ставится по договорам БФЛ и только на людей. План отдела
+          отдельно не задаётся — он складывается из того, что вы разложили, и
+          показан последней строкой. Пустая клетка означает, что плана нет: по
+          такому месяцу не будет ни плана, ни квоты, ни оценки.
         </p>
       </div>
 
@@ -197,26 +196,19 @@ export default function RopPlansPage({ team = null, isAdmin = false }) {
             <table className="table-compact rop-table rop-plans">
               <thead>
                 <tr>
-                  <th style={{ minWidth: 170 }}>Кому</th>
+                  <th style={{ minWidth: 200 }}>Кому</th>
                   {PLAN_METRICS.map(m => (
-                    <th key={m.id} className="portal-num">
-                      {m.label}
-                      {m.unit !== 'шт' && <span className="rop-unit"> {m.unit}</span>}
-                    </th>
+                    <th key={m.id} className="portal-num">{m.label}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {rows.map(r => (
-                  <tr key={r.key} className={r.name ? '' : 'rop-row-total'}>
-                    <td style={{ fontWeight: r.name ? 500 : 700, whiteSpace: 'nowrap' }}>{r.label}</td>
+                {managers.map(r => (
+                  <tr key={r.manager_name}>
+                    <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>{r.manager_name}</td>
                     {PLAN_METRICS.map(m => {
-                      const k = cellKey(r.name, m.id)
+                      const k = cellKey(r.manager_name, m.id)
                       const dirty = changes.some(c => c.k === k)
-                      // Строку отдела правит только руководитель направления.
-                      // База это и так не даст сделать, но запрет должен быть
-                      // виден до нажатия, а не всплывать ошибкой после.
-                      const locked = !r.name && !isAdmin
                       return (
                         <td key={m.id} className="portal-num">
                           <input
@@ -224,8 +216,6 @@ export default function RopPlansPage({ team = null, isAdmin = false }) {
                             inputMode="decimal"
                             value={form[k] ?? ''}
                             placeholder="—"
-                            disabled={locked}
-                            title={locked ? 'План на отдел ставит руководитель направления' : undefined}
                             onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))}
                           />
                         </td>
@@ -233,23 +223,13 @@ export default function RopPlansPage({ team = null, isAdmin = false }) {
                     })}
                   </tr>
                 ))}
-                <tr className="rop-subrow">
-                  <td style={{ color: 'var(--text-muted)' }}>сумма по менеджерам</td>
+                <tr className="rop-row-total">
+                  <td style={{ fontWeight: 700 }}>Отдел целиком</td>
                   {PLAN_METRICS.map(m => {
-                    // Средний чек и норму брака складывать бессмысленно: это
-                    // не объёмы. Складывать их значило бы печатать число,
-                    // которое ничего не означает.
-                    const additive = m.unit === 'шт'
-                    const s = additive ? managersSum(m.id) : null
-                    const dept = toValue(form[cellKey(null, m.id)])
-                    const gap = additive && s != null && dept != null && s !== dept
+                    const s = сумма(m.id)
                     return (
-                      <td key={m.id} className="portal-num">
-                        {s == null ? <span className="td-muted">—</span> : (
-                          <span className={gap ? 'rop-gap' : ''}>
-                            {s}{gap ? ` (у отдела ${dept})` : ''}
-                          </span>
-                        )}
+                      <td key={m.id} className="portal-num" style={{ fontWeight: 700 }}>
+                        {s == null ? <span className="td-muted">—</span> : formatNum(s)}
                       </td>
                     )
                   })}
@@ -260,12 +240,22 @@ export default function RopPlansPage({ team = null, isAdmin = false }) {
         </div>
       )}
 
+      {managers.length === 0 && !loading && (
+        <div className="empty-state" style={{ marginTop: 16 }}>
+          <div className="empty-state-icon">👥</div>
+          <h3>В отделе нет активных менеджеров</h3>
+          <p>Планы ставятся на людей, а ставить их не на кого.</p>
+        </div>
+      )}
+
       <div className="rop-footer">
-        План отдела хранится отдельно от планов менеджеров и не обязан быть их
-        суммой — расхождение в последней строке показано как подсказка, а не
-        как ошибка. Состав отдела берётся из таблицы rop_managers: ушёл
-        человек — снимите отметку «активен», и его прошлые результаты
-        останутся в истории, а в текущих показателях он больше не появится.
+        План отдела равен сумме планов менеджеров и отдельной цифрой не
+        хранится: число, за которое никто персонально не отвечает, планом не
+        является. Итог в последней строке пересчитывается прямо при наборе, до
+        сохранения{(() => { const s = сумма('оксвсего'); return s == null ? '' : ` — сейчас ${formatNum(s)} ${plural(s, 'договор', 'договора', 'договоров')}` })()}.
+        Состав отдела берётся из таблицы rop_managers: ушёл человек — снимите
+        отметку «активен», и его прошлые результаты останутся в истории, а в
+        планах он больше не появится.
       </div>
     </div>
   )

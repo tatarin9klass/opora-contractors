@@ -1,27 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { todayISO } from '../lib/dateContext.js'
 import {
-  loadRopData, periodBounds, recentMonths, sumRows, avgCheck, brakShare,
-  planFor, runRate, planStatus, paceTarget, stageMissing, formatMoneyShort, GROUPS, byTeam,
-  prevBounds, dailySeries, quotaPerDay, loadDeals, loadLost,
+  loadRopData, periodBounds, recentMonths, sumRows, planFor, runRate, planStatus,
+  paceTarget, formatMoneyShort, GROUPS, byTeam, prevBounds, dailySeries, quotaPerDay,
 } from '../lib/rop.js'
 import { formatNum, plural } from '../lib/helpers.js'
 
 // ============================================================================
-// Общий дашборд отдела продаж: план против факта.
+// «Главное» — единственный экран отдела, на котором стоит план.
 //
-// ЧТО ЗДЕСЬ ГЛАВНОЕ ПО УСТРОЙСТВУ. Под каждым показателем стоит развёртка на
-// маркетинг и рекомендации, и стоит всегда, без раскрытия по клику. Это
-// главный разрез отдела: у заявки от агента, из отдела продаж или по
-// рекомендации другой уровень лояльности, и доходимость отличается втрое.
-// Смешивать их в одной цифре значит прятать самое содержательное, что в
-// данных есть, а прятать за кликом — делать вид, что итог самодостаточен.
+// ЗДЕСЬ НАМЕРЕННО МАЛО. Раньше на этой вкладке жили встречи, брак, средний
+// чек, ФПА, воронка по этапам, потери по причинам и скорость переходов —
+// одиннадцать блоков. Руководитель отдела отвечает за одно число: сколько
+// договоров банкротства заключено. Всё остальное объясняет это число, но
+// рядом с ним превращает экран в отчёт, который читают раз в месяц вместо
+// того, чтобы смотреть каждый день.
 //
-// ПЕРЕДАЧА В ОКС НЕ ДЕЛИТСЯ НА ВСТРЕЧИ. В Битриксе передача оформляется
-// новой карточкой без истории встречи, поэтому передачи месяца относятся к
-// встречам, которые были раньше. Соотношение этих двух чисел здесь не
-// показывается — оно давало бы больше ста процентов и вводило бы в
-// заблуждение. Подпись под блоком об этом прямо говорит.
+// ЧТО ОСТАЛОСЬ. Договоры тремя видами, темп, квота — и один график. Больше
+// ничего, пока не попросят обратно.
+//
+// РАЗВЁРТКА НА МАРКЕТИНГ И РЕКОМЕНДАЦИИ СТОИТ ВСЕГДА, без раскрытия по
+// клику: у заявки от агента и у заявки по рекомендации разная доходимость,
+// и общая цифра её прячет.
 // ============================================================================
 
 const MODES = [
@@ -46,17 +46,9 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
       </div>
       {plan != null && (
         <div className="rop-metric-plan">
-          {inverse ? 'норма не выше ' : 'план '}
-          {unit === '₽' ? formatMoneyShort(plan) : formatNum(plan)}{unit === '%' ? '%' : ''}
-          {/* У метрики «не выше» доля от плана ничего не значит: 91% от
-              нормы брака читается как недовыполнение, хотя это как раз
-              хорошо. Поэтому для неё показывается расхождение в пунктах. */}
-          {fact != null && plan > 0 && (inverse
-            ? <span className="rop-metric-pct">
-                {' · '}{fact > plan ? 'выше' : 'ниже'} нормы на{' '}
-                {formatNum(Math.abs(Math.round((fact - plan) * 10) / 10))} п.п.
-              </span>
-            : <span className="rop-metric-pct"> · {Math.round((100 * fact) / plan)}%</span>
+          план {unit === '₽' ? formatMoneyShort(plan) : formatNum(plan)}
+          {fact != null && plan > 0 && (
+            <span className="rop-metric-pct"> · {Math.round((100 * fact) / plan)}%</span>
           )}
           {partial && (
             <span className="rop-metric-pct"> · к этому дню {formatNum(Math.round(target))}</span>
@@ -64,11 +56,11 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
         </div>
       )}
       {/* «Было» рядом с цифрой отвечает на вопрос, который иначе остаётся
-          без ответа: двадцать восемь передач — это много или мало. Без
+          без ответа: двадцать четыре договора — это много или мало. Без
           прошлого периода любая метрика читается как нейтральная. */}
       {was != null && fact != null && (
         <div className="rop-metric-was">
-          было {unit === '₽' ? formatMoneyShort(was) : formatNum(was)}{unit === '%' ? '%' : ''}
+          было {formatNum(was)}
           {was > 0 && (
             <span className={`rop-delta ${
               (fact > was) === !inverse ? 'up' : fact === was ? '' : 'down'}`}>
@@ -86,53 +78,98 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
 
 // Развёртка на источники. Видна всегда, а не по клику: у заявки от агента и
 // у заявки по рекомендации разная доходимость, и общая цифра её прячет.
-// Прятать главный разрез за взаимодействием значит делать вид, что итог
-// самодостаточен — а он не самодостаточен ни в одной строке этого экрана.
 //
 // Маркетинг и рекомендации показываются всегда, даже нулём: так карточки не
 // прыгают по высоте от периода к периоду. «Прочее» появляется, только когда
 // в нём что-то есть, — пустая строка в каждой плитке отвлекала бы.
-//
-// kind решает, как читать число. Доли считаются только для количеств: у
-// среднего чека доля от суммы средних не значит ничего, а у доли брака
-// складывать проценты групп просто нельзя.
+function Split({ rows, pick }) {
+  const vals = GROUPS.map(g => ({ g, v: pick(sumRows(rows, g.id)) }))
+  const shown = vals.filter(x => x.g.id !== 'прочее' || x.v)
+  if (!shown.some(x => x.v)) return null
+  const total = vals.reduce((a, x) => a + (x.v || 0), 0)
+
+  return (
+    <div className="rop-split">
+      {shown.map(({ g, v }) => (
+        <div key={g.id} className="rop-split-row">
+          <span className={`rop-dot ${g.id === 'маркетинг' ? 'mk' : g.id === 'рекомендации' ? 'rec' : 'oth'}`} />
+          <span className="rop-split-label">{g.label}</span>
+          <span className="rop-split-value">{formatNum(v)}</span>
+          <span className="rop-split-pct">{total ? Math.round((100 * (v || 0)) / total) + '%' : ''}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Плавная кривая через дневные значения — монотонный кубический сплайн
+// (Фрич–Карлсон). Обычный сглаживающий сплайн между двумя нулями провисает
+// НИЖЕ нуля и рисует отрицательные договоры; монотонный не выходит за
+// пределы соседних значений и такого не делает.
+function smoothPath(pts) {
+  const n = pts.length
+  if (!n) return ''
+  if (n === 1) return `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`
+  const dx = [], s = []
+  for (let i = 0; i < n - 1; i++) {
+    dx.push(pts[i + 1][0] - pts[i][0])
+    s.push((pts[i + 1][1] - pts[i][1]) / (pts[i + 1][0] - pts[i][0]))
+  }
+  const m = new Array(n)
+  m[0] = s[0]
+  m[n - 1] = s[n - 2]
+  for (let i = 1; i < n - 1; i++) m[i] = s[i - 1] * s[i] <= 0 ? 0 : (s[i - 1] + s[i]) / 2
+  for (let i = 0; i < n - 1; i++) {
+    if (s[i] === 0) { m[i] = 0; m[i + 1] = 0; continue }
+    const a = m[i] / s[i], b = m[i + 1] / s[i]
+    const h = Math.hypot(a, b)
+    if (h > 3) { const t = 3 / h; m[i] = t * a * s[i]; m[i + 1] = t * b * s[i] }
+  }
+  let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`
+  for (let i = 0; i < n - 1; i++) {
+    const h = dx[i]
+    d += ` C${(pts[i][0] + h / 3).toFixed(1)} ${(pts[i][1] + (m[i] * h) / 3).toFixed(1)}`
+      + `, ${(pts[i + 1][0] - h / 3).toFixed(1)} ${(pts[i + 1][1] - (m[i + 1] * h) / 3).toFixed(1)}`
+      + `, ${pts[i + 1][0].toFixed(1)} ${pts[i + 1][1].toFixed(1)}`
+  }
+  return d
+}
 
 // Договоры по дням против дневной нормы.
-//
-// ПОЧЕМУ СТОЛБИКИ, А НЕ ЛИНИЯ. Договор — событие, а не измерение. Линия,
-// протянутая между вторником и четвергом, обещает, что в среду было
-// что-то среднее, хотя в среду не было ничего. Столбик показывает ровно
-// то, что случилось в этот день, и пустой день выглядит пустым.
 //
 // ЛИНИЯ НОРМЫ ГОРИЗОНТАЛЬНА — это план, разложенный на дни поровну. Она не
 // прогноз, а линейка: по ней видно, какие дни вытягивают месяц, а какие
 // проваливают, не считая ничего в уме.
 //
-// Чего этот график не показывает — отставания накопленным итогом. За этим
-// стоит плитка «Квота на день»: она и говорит, сколько надо делать дальше.
+// Будущие дни не рисуются вовсе: кривая обрывается на сегодняшнем. Довести
+// её до конца месяца значило бы показать падение в ноль там, где просто
+// ещё не наступило завтра.
 function DailyPlan({ дни, норма }) {
-  const W = 760, H = 210, L = 34, R = 46, T = 18, B = 30
+  const W = 760, H = 220, L = 34, R = 46, T = 20, B = 30
   const n = дни.length
-  const hi = Math.max(норма || 0, ...дни.map(d => d.факт || 0), 1)
-  const top = hi * 1.2
-  const bw = (W - L - R) / Math.max(1, n)
-  const X = i => L + bw * i
+  const факты = дни.filter(d => d.факт != null)
+  const hi = Math.max(норма || 0, ...факты.map(d => d.факт), 1)
+  const top = hi * 1.25
+  const X = i => L + ((W - L - R) * i) / Math.max(1, n - 1)
   const Y = v => T + (H - T - B) - ((H - T - B) * v) / top
 
-  // Деления только целые: половины договоров не бывает.
   const step = Math.max(1, Math.ceil(hi / 4))
   const ticks = []
   for (let v = 0; v <= hi; v += step) ticks.push(v)
 
-  // Подписи дат не на каждый столбик: за месяц они слипаются. Шаг
-  // подбирается так, чтобы подписей вышло около восьми.
   const шаг = Math.max(1, Math.round(n / 8))
   const dd = iso => iso.slice(8) + '.' + iso.slice(5, 7)
 
-  // Ширина столбика ограничена сверху: на периоде в один-два дня доля от
-  // полосы дала бы плиту в треть экрана, и один договор выглядел бы как
-  // достижение месяца.
-  const ш = Math.max(1.5, Math.min(30, bw * 0.64))
+  // Точки держат СВОЙ номер дня в периоде, а не позицию в отфильтрованном
+  // списке. Сейчас пропуски бывают только в хвосте (будущее), и разницы нет,
+  // но стоит появиться дыре в середине — и кривая поехала бы по датам.
+  const точки = []
+  дни.forEach((d, i) => { if (d.факт != null) точки.push({ i, v: d.факт, дата: d.дата }) })
+  const pts = точки.map(p => [X(p.i), Y(p.v)])
+  const кривая = smoothPath(pts)
+  const заливка = pts.length > 1
+    ? `${кривая} L${pts[pts.length - 1][0].toFixed(1)} ${Y(0).toFixed(1)} L${pts[0][0].toFixed(1)} ${Y(0).toFixed(1)} Z`
+    : ''
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="rop-burnup">
@@ -142,14 +179,19 @@ function DailyPlan({ дни, норма }) {
           <text x={L - 6} y={Y(v) + 3.5} fontSize="9.5" fill="#6b7670" textAnchor="end">{v}</text>
         </g>
       ))}
-      <text x={L - 6} y={T - 6} fontSize="9" fill="#6b7670" textAnchor="end">шт</text>
+      <text x={L - 6} y={T - 7} fontSize="9" fill="#6b7670" textAnchor="end">шт</text>
 
-      {дни.map((d, i) => (d.факт ? (
-        <g key={d.дата}>
-          <rect x={X(i) + (bw - ш) / 2} y={Y(d.факт)} width={ш}
-                height={Math.max(1, Y(0) - Y(d.факт))} rx="1.5" fill="#1f6f3f" />
-          <text x={X(i) + bw / 2} y={Y(d.факт) - 4} fontSize="9" fontWeight="600"
-                fill="#1a1f1c" textAnchor="middle">{d.факт}</text>
+      {заливка && <path d={заливка} fill="#1f6f3f" opacity="0.08" />}
+      {кривая && <path d={кривая} fill="none" stroke="#1f6f3f" strokeWidth="2.4"
+                       strokeLinejoin="round" strokeLinecap="round" />}
+
+      {/* Точка и подпись только там, где договоры были: подписывать каждый
+          ноль значит засеять график нулями и спрятать за ними содержание. */}
+      {точки.map(p => (p.v ? (
+        <g key={p.дата}>
+          <circle cx={X(p.i)} cy={Y(p.v)} r="3" fill="#1f6f3f" stroke="#fff" strokeWidth="1.5" />
+          <text x={X(p.i)} y={Y(p.v) - 8} fontSize="9" fontWeight="600"
+                fill="#1a1f1c" textAnchor="middle">{p.v}</text>
         </g>
       ) : null))}
 
@@ -166,39 +208,10 @@ function DailyPlan({ дни, норма }) {
       )}
 
       {дни.map((d, i) => (i % шаг === 0 ? (
-        <text key={d.дата} x={X(i) + bw / 2} y={H - 8} fontSize="8.5" fill="#6b7670"
+        <text key={d.дата} x={X(i)} y={H - 8} fontSize="8.5" fill="#6b7670"
               textAnchor="middle">{dd(d.дата)}</text>
       ) : null))}
     </svg>
-  )
-}
-
-function Split({ rows, pick, kind = 'count' }) {
-  const vals = GROUPS.map(g => ({ g, v: pick(sumRows(rows, g.id)) }))
-  const shown = vals.filter(x => x.g.id !== 'прочее' || x.v)
-  if (!shown.some(x => x.v)) return null
-  const total = kind === 'count' ? vals.reduce((a, x) => a + (x.v || 0), 0) : 0
-
-  const fmt = (v) => {
-    if (v == null || (kind !== 'count' && !v)) return '—'
-    if (kind === 'money') return formatMoneyShort(v)
-    if (kind === 'pct') return formatNum(Math.round(v * 10) / 10) + '%'
-    return formatNum(v)
-  }
-
-  return (
-    <div className="rop-split">
-      {shown.map(({ g, v }) => (
-        <div key={g.id} className="rop-split-row">
-          <span className={`rop-dot ${g.id === 'маркетинг' ? 'mk' : g.id === 'рекомендации' ? 'rec' : 'oth'}`} />
-          <span className="rop-split-label">{g.label}</span>
-          <span className="rop-split-value">{fmt(v)}</span>
-          <span className="rop-split-pct">
-            {kind === 'count' && total ? Math.round((100 * (v || 0)) / total) + '%' : ''}
-          </span>
-        </div>
-      ))}
-    </div>
   )
 }
 
@@ -209,8 +222,6 @@ export default function RopDashboardPage({ team = null }) {
   const [to, setTo] = useState(todayISO())
   const [data, setData] = useState(null)
   const [prev, setPrev] = useState(null)
-  const [pace, setPace] = useState(null)
-  const [lost, setLost] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -231,10 +242,6 @@ export default function RopDashboardPage({ team = null }) {
 
     // Прошлый сопоставимый период грузится отдельно и молча: если он не
     // придёт, экран просто останется без сравнения, а не сломается.
-    loadLost(bounds.from, bounds.to)
-      .then(l => { if (!cancelled) setLost(l) })
-      .catch(() => { if (!cancelled) setLost([]) })
-
     const pb = prevBounds(mode, bounds.from, bounds.to)
     loadRopData(pb.from, pb.to)
       .then(d => { if (!cancelled) setPrev(d) })
@@ -242,29 +249,18 @@ export default function RopDashboardPage({ team = null }) {
     return () => { cancelled = true }
   }, [bounds.from, bounds.to, mode])
 
-  useEffect(() => {
-    let cancelled = false
-    loadDeals().then(d => { if (!cancelled) setPace(d.pace) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [])
-
   const rows = byTeam(data?.daily || [], team)
   const plans = data?.plans || []
   const total = useMemo(() => sumRows(rows), [rows])
-  const plan = (m) => planFor(plans, bounds.from, m, null, team)
+  const план = planFor(plans, bounds.from, 'оксвсего', null, team)
 
   const было = useMemo(
     () => (prev ? sumRows(byTeam(prev.daily || [], team)) : null),
     [prev, team],
   )
-  const чек = avgCheck(total)
-  const брак = brakShare(total)
-  // Темп и квота считаются от договоров БФЛ: это та цифра, на которую
-  // заведён план. Окс_всего остаётся в данных, но план-факт по нему больше
-  // не строится — в нём смешаны БФЛ, АЗ и ВКИ, а продаются они порознь.
   const rr = runRate(total.окс_бфл, bounds.from, bounds.to)
-  const квота = quotaPerDay(plan('оксвсего'), total.окс_бфл, bounds.to)
-  const ряд = dailySeries(rows, bounds.from, bounds.to, plan('оксвсего'))
+  const квота = quotaPerDay(план, total.окс_бфл, bounds.to)
+  const ряд = dailySeries(rows, bounds.from, bounds.to, план)
 
   if (loading && !data) return <div className="loading">Загрузка...</div>
 
@@ -302,7 +298,7 @@ export default function RopDashboardPage({ team = null }) {
         </div>
       </div>
 
-      {/* ---- Основное ---- */}
+      {/* ---- Договоры ---- */}
       <div className="portal-section-head">
         <h2 className="portal-section-title">Заключённые договоры</h2>
       </div>
@@ -313,14 +309,14 @@ export default function RopDashboardPage({ team = null }) {
             у неё тоже есть. АЗ и ВКИ продаются поверх договора, поэтому
             сделка может попасть и в БФЛ, и в АЗ — три плитки намеренно не
             складываются в одну сумму. */}
-        <Metric label="БФЛ" fact={total.окс_бфл} plan={plan('оксвсего')} unit="шт" bounds={bounds}
+        <Metric label="БФЛ" fact={total.окс_бфл} plan={план} unit="шт" bounds={bounds}
                 was={было?.окс_бфл} big>
           <Split rows={rows} pick={t => t.окс_бфл} />
         </Metric>
-        <Metric label="АЗ" fact={total.окс_аз} plan={plan('оксаз')} unit="шт" bounds={bounds} was={было?.окс_аз}>
+        <Metric label="АЗ" fact={total.окс_аз} unit="шт" bounds={bounds} was={было?.окс_аз}>
           <Split rows={rows} pick={t => t.окс_аз} />
         </Metric>
-        <Metric label="ВКИ" fact={total.окс_вки} plan={plan('оксвки')} unit="шт" bounds={bounds} was={было?.окс_вки}>
+        <Metric label="ВКИ" fact={total.окс_вки} unit="шт" bounds={bounds} was={было?.окс_вки}>
           <Split rows={rows} pick={t => t.окс_вки} />
         </Metric>
         {/* Темп сравнивается с месячным планом целиком, без доли дней: он и
@@ -329,7 +325,7 @@ export default function RopDashboardPage({ team = null }) {
             предсказание на источники значит придавать ему точность,
             которой в нём нет. */}
         <Metric
-          label="Runrate" fact={rr} plan={plan('оксвсего')} unit="шт" additive={false}
+          label="Runrate" fact={rr} plan={план} unit="шт" additive={false}
           sub={rr === total.окс_бфл ? 'период закрыт' : 'при текущем темпе'}
         />
         {/* Квота отвечает на единственный вопрос, который остаётся после
@@ -355,165 +351,18 @@ export default function RopDashboardPage({ team = null }) {
       <div className="fig-card">
         <div className="fig-card-t">Договоры БФЛ по дням</div>
         <div className="fig-card-s">
-          столбики — заключено за день, штук; оранжевая линия — дневная норма (план ÷ дней в периоде)
+          заключено за день, штук; оранжевая линия — дневная норма (план ÷ дней в периоде)
         </div>
         <DailyPlan дни={ряд.дни} норма={ряд.норма} />
       </div>
 
-      <div className="portal-section-head">
-        <h2 className="portal-section-title">Встречи</h2>
-      </div>
-      <div className="rop-metrics">
-        <Metric label="Проведено встреч" fact={total.встречи} plan={plan('встречи')} unit="шт" bounds={bounds}
-                was={было?.встречи} big>
-          <Split rows={rows} pick={t => t.встречи} />
-        </Metric>
-      </div>
-
-      {/* ---- Дополнительные ---- */}
-      <div className="portal-section-head">
-        <h2 className="portal-section-title">Дополнительно</h2>
-        <p className="portal-section-note">
-          Брак считается от проведённых встреч. Средний чек — из товарных позиций
-          за вычетом ФПА, по сделкам, дошедшим до оформления.
-        </p>
-      </div>
-
-      <div className="rop-metrics">
-        <Metric
-          label="Брак" fact={брак == null ? null : Math.round(брак * 10) / 10}
-          plan={plan('бракнорма')} unit="%" inverse additive={false}
-          sub={`${formatNum(total.брак)} из ${formatNum(total.встречи)} ${plural(total.встречи, 'встречи', 'встреч', 'встреч')}`}
-        >
-          {/* В развёртке доля брака внутри каждой группы, а не дележ 29
-              штук на две части. Вопрос у руководителя не «откуда брак», а
-              «где бракуют чаще», и на него отвечают только проценты. */}
-          <Split rows={rows} kind="pct"
-                 pick={t => (t.встречи ? (100 * t.брак) / t.встречи : null)} />
-        </Metric>
-        <Metric
-          label="Средний чек" fact={чек} plan={plan('среднийчек')} unit="₽" additive={false}
-          was={было && было.чек_сделок ? Math.round(было.чек_сумма / было.чек_сделок) : undefined}
-          sub={`по ${formatNum(total.чек_сделок)} ${plural(total.чек_сделок, 'сделке', 'сделкам', 'сделкам')} с договором`}
-        >
-          <Split rows={rows} kind="money" pick={t => avgCheck(t)} />
-        </Metric>
-        <Metric
-          label="ФПА" fact={total.фпа_сумма || null} unit="₽"
-          sub="продаётся отдельно, в чек не входит"
-        >
-          <Split rows={rows} kind="money" pick={t => t.фпа_сумма} />
-        </Metric>
-      </div>
-
-      {!loading && !total.встречи && !total.окс_всего && (
+      {!loading && !total.окс_бфл && !total.окс_аз && !total.окс_вки && (
         <div className="empty-state" style={{ marginTop: 20 }}>
           <div className="empty-state-icon">📭</div>
-          <h3>За этот период данных нет</h3>
+          <h3>За этот период договоров нет</h3>
           <p>Сделки загружены с 1 сентября 2026 года.</p>
         </div>
       )}
-
-      {lost && lost.length > 0 && (() => {
-        const свои = byTeam(lost, team)
-        const по = new Map()
-        let всего = 0, безПричины = 0
-        for (const r of свои) {
-          const n = Number(r.сделок || 0)
-          всего += n
-          if (r.без_причины) безПричины += n
-          по.set(r.причина, (по.get(r.причина) || 0) + n)
-        }
-        if (!всего) return null
-        const список = [...по.entries()].sort((a, b) => b[1] - a[1])
-        return (
-          <>
-            <div className="portal-section-head">
-              <h2 className="portal-section-title">Потери и их причины</h2>
-              <p className="portal-section-note">
-                Отдельного поля «причина отказа» в воронке нет — причиной
-                служит стадия, на которой сделка закрылась. Поэтому «Встреча:
-                брак» это не причина, а её отсутствие: по таким сделкам потом
-                не восстановить, что произошло.
-              </p>
-            </div>
-            {безПричины > 0 && (
-              <div className="rop-alert">
-                <b>{formatNum(безПричины)}</b> из {formatNum(всего)}{' '}
-                {plural(всего, 'потери', 'потерь', 'потерь')} закрыты без указания
-                причины — это {Math.round((100 * безПричины) / всего)}%. Пока сделка
-                уходит в общую корзину, разговаривать с менеджером не о чем: сводка
-                есть, повода нет.
-              </div>
-            )}
-            <div className="rop-loss">
-              {список.map(([причина, n]) => (
-                <div key={причина} className="rop-loss-row">
-                  <span className="rop-loss-name">{причина}</span>
-                  <span className="rop-loss-bar">
-                    <span className={`rop-loss-fill ${причина.includes('брак') ? 'bad' : ''}`}
-                          style={{ width: `${Math.round((100 * n) / всего)}%` }} />
-                  </span>
-                  <span className="rop-loss-n">{formatNum(n)}</span>
-                  <span className="rop-loss-pct">{Math.round((100 * n) / всего)}%</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )
-      })()}
-
-      {pace && pace.length > 0 && (
-        <>
-          <div className="portal-section-head">
-            <h2 className="portal-section-title">Скорость этапов</h2>
-            <p className="portal-section-note">
-              Сколько дней сделка проводит на этапе, прежде чем уйти дальше.
-              Конверсия говорит, сколько дошло; скорость — почему медленно, и
-              ею руководитель управляет напрямую. Порог застоя в портфеле
-              берётся отсюда же: это срок, за который этап отпускает восемь
-              сделок из десяти.
-            </p>
-          </div>
-          <div className="table-wrap">
-            <table className="table-compact rop-table">
-              <thead>
-                <tr>
-                  <th>Этап</th>
-                  <th>Переходов</th>
-                  <th>Медиана, дней</th>
-                  <th>Восемь из десяти уходят за</th>
-                  <th>Доходят до ОКС</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...pace].sort((a, b) => b.переходов - a.переходов).map(p => (
-                  <tr key={p.stage_id}>
-                    <td>{p.этап || p.stage_id}</td>
-                    <td className="portal-num">{formatNum(p.переходов)}</td>
-                    <td className="portal-num">{formatNum(p.медиана_дней)}</td>
-                    <td className="portal-num">{formatNum(p.дней_у_80_процентов)}</td>
-                    <td className="portal-num">
-                      {p.доля_дошедших == null
-                        ? <span className="td-muted">мало истории</span>
-                        : <b>{formatNum(p.доля_дошедших)}%</b>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      <div className="rop-footer">
-        {(() => {
-          const miss = stageMissing(data?.stageSince || [], 'оплата', bounds.from)
-          return miss
-            ? `Этап «Полная/частичная оплата» заведён ${miss.split('-').reverse().join('.')} — за более ранние дни по нему данных нет.`
-            : null
-        })()}
-      </div>
     </div>
   )
 }

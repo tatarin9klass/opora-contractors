@@ -103,7 +103,7 @@ function AppShell() {
   // Кабинет РОПа — ровно по той же причине и на том же месте: показатели
   // своего отдела и ничего больше. Планы он видит, но не правит, поэтому
   // вкладка ввода планов ему не передаётся.
-  if (isRop) return <RopPage standalone isAdmin={false} />
+  if (isRop) return <RopPage standalone />
 
   const safePage = !isAdmin && ADMIN_ONLY_PAGES.has(page) ? (HOME_PAGE[direction] || 'dashboard') : page
   // Направление считаем по самому разделу, а не по стейту — так подсветка меню
@@ -148,7 +148,7 @@ function AppShell() {
           {safePage === 'apexpenses' && <ApExpensesPage />}
           {safePage === 'apattr' && <ApAttributionPage />}
           {safePage === 'access' && <PortalAccessPage />}
-          {safePage === 'rop' && <RopPage isAdmin={isAdmin} />}
+          {safePage === 'rop' && <RopPage />}
         </div>
       </div>
     </div>

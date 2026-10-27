@@ -1,26 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { todayISO } from '../lib/dateContext.js'
 import {
-  loadRopData, loadPortfolio, portfolioByManager, periodBounds, recentMonths,
-  planFor, planStatus, paceTarget, byTeam, formatMoneyShort, GROUPS,
+  loadRopData, periodBounds, recentMonths, planFor, planStatus, paceTarget,
+  runRate, quotaPerDay, byTeam,
 } from '../lib/rop.js'
-import { formatNum } from '../lib/helpers.js'
+import { formatNum, plural } from '../lib/helpers.js'
 
 // ============================================================================
-// Показатели по менеджерам отдела.
+// Менеджеры отдела: тот же разговор, что на «Главном», но по людям.
 //
-// КОНВЕРСИИ СЧИТАЮТСЯ ТОЛЬКО ТАМ, ГДЕ ЭТАПЫ ПРОХОДИТ ОДНА СДЕЛКА:
-// встреча → ИКП → договор без оплаты → полная/частичная оплата. Это честные
-// переходы внутри карточки, и история стадий позволяет их считать.
+// КОЛОНКИ ПОВТОРЯЮТ ПЛИТКИ ГЛАВНОГО ЭКРАНА, и это главное решение. Раньше
+// здесь жили одиннадцать показателей с конверсиями между этапами — таблица,
+// по которой можно изучать отдел, но нельзя провести планёрку. План стоит на
+// одном числе, значит и спрашивать надо по одному числу: сколько договоров
+// БФЛ, при каком плане, какой темп и сколько надо делать дальше.
 //
-// «Передано в ОКС» стоит отдельным счётчиком без конверсии, и это не
-// упущение: передача оформляется новой карточкой, у которой нет истории
-// встречи. Делить передачи на встречи значило бы делить одни сделки на
-// другие — на рекомендациях такое отношение уже дало 106%.
+// КВОТА У КАЖДОГО СВОЯ, и она — главное, ради чего таблица существует.
+// Отставание отдела само по себе не действие; отставание конкретного
+// человека на столько-то договоров в день — действие.
 //
-// РАЗВЁРТКА НА МАРКЕТИНГ И РЕКОМЕНДАЦИИ открывается по клику на строке. У
-// рекомендаций доходимость втрое выше, и сравнивать менеджеров, не глядя на
-// состав их потока, — значит сравнивать разный материал.
+// Итоговая строка складывает факт по людям, а план берёт тем же способом,
+// что и «Главное»: как сумму планов менеджеров. Поэтому строка «Отдел» и
+// плитка на первом экране не могут разойтись.
 // ============================================================================
 
 const MODES = [
@@ -29,37 +30,25 @@ const MODES = [
   { id: 'range', label: 'Период' },
 ]
 
-function pct(a, b) {
-  if (!b) return null
-  return Math.round((1000 * a) / b) / 10
+const KEYS = ['окс_бфл', 'окс_аз', 'окс_вки']
+
+function blank() {
+  const o = {}
+  for (const k of KEYS) o[k] = 0
+  return o
 }
 
-// ЦВЕТ КОНВЕРСИИ — ЭТО СРАВНЕНИЕ С ОТДЕЛОМ, А НЕ С АБСОЛЮТНОЙ НОРМОЙ.
-// Нормы «хорошая конверсия встреча → ИКП» у нас нет, и выдумывать её
-// порогом в пятьдесят процентов нельзя: получится, что экран оценивает
-// людей по числу, взятому из воздуха. Отдел же — честная база сравнения:
-// он работает с тем же потоком в тот же месяц.
-function tone(value, base, inverse = false) {
-  if (value == null || base == null || !base) return ''
-  const r = value / base
-  if (inverse) return r <= 0.9 ? 'ok' : r >= 1.25 ? 'bad' : ''
-  return r >= 1.1 ? 'ok' : r <= 0.75 ? 'bad' : ''
+function add(t, r) {
+  for (const k of KEYS) t[k] += Number(r[k] || 0)
 }
 
-function Conv({ value, base, inverse }) {
-  if (value == null) return <span className="td-muted">—</span>
-  // Больше ста процентов — не ошибка расчёта: сделка могла попасть на этап,
-  // минуя предыдущий, и в знаменателе её нет, а в числителе есть. Цифру
-  // прячем не мы, а подсказка объясняет, откуда она.
-  const over = value > 100
-  return (
-    <span
-      className={`rop-conv ${tone(value, base, inverse)} ${over ? 'over' : ''}`}
-      title={over ? 'Больше 100%: часть сделок попала на этот этап, минуя предыдущий' : undefined}
-    >
-      {formatNum(value)}%
-    </span>
-  )
+// Квота печатается через запятую и только до десятых: «1,5 договора в день»
+// понятно, «1,4838709677» — нет.
+function Quota({ q }) {
+  if (q == null) return <span className="td-muted">плана нет</span>
+  if (q.дней === 0) return <span className="td-muted">период закрыт</span>
+  if (q.осталось === 0) return <span className="rop-conv ok">выполнен</span>
+  return <span>{formatNum(q.квота)}</span>
 }
 
 export default function RopManagersPage({ team = null }) {
@@ -68,10 +57,8 @@ export default function RopManagersPage({ team = null }) {
   const [from, setFrom] = useState(todayISO())
   const [to, setTo] = useState(todayISO())
   const [data, setData] = useState(null)
-  const [pf, setPf] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [openRow, setOpenRow] = useState(null)
 
   const months = useMemo(() => recentMonths(12), [])
   const bounds = useMemo(() => periodBounds(mode, anchor, from, to), [mode, anchor, from, to])
@@ -86,57 +73,29 @@ export default function RopManagersPage({ team = null }) {
     return () => { cancelled = true }
   }, [bounds.from, bounds.to])
 
-  // Портфель грузится отдельно и не зависит от периода: это снимок на
-  // сегодня. Он здесь затем, что по одному потоку нельзя судить о человеке —
-  // месяц мог быть отличным при пустом портфеле, и тогда следующий уже
-  // предрешён.
-  useEffect(() => {
-    let cancelled = false
-    loadPortfolio()
-      .then(d => { if (!cancelled) setPf(d) })
-      .catch(() => { if (!cancelled) setPf({ portfolio: [] }) })
-    return () => { cancelled = true }
-  }, [])
-
-  const запас = useMemo(() => {
-    const m = new Map()
-    for (const r of portfolioByManager(byTeam(pf?.portfolio || [], team))) m.set(r.менеджер, r)
-    return m
-  }, [pf, team])
-
-  // Свод по менеджеру, и отдельно по каждой группе источника — для развёртки.
-  // Заодно складывается отдел целиком: он нужен как база сравнения, по
-  // которой красится конверсия.
-  const dept = useMemo(() => {
-    const t = { всего: blank(), группы: new Map() }
-    for (const r of byTeam(data?.byManager || [], team)) {
-      add(t.всего, r)
-      if (!t.группы.has(r.группа)) t.группы.set(r.группа, blank())
-      add(t.группы.get(r.группа), r)
-    }
-    return t
-  }, [data, team])
-
-  const byManager = useMemo(() => {
-    const rows = byTeam(data?.byManager || [], team)
-    const m = new Map()
-    for (const r of rows) {
-      const key = r.менеджер
-      if (!m.has(key)) {
-        m.set(key, {
-          менеджер: key, sort: r.sort_order ?? 100,
-          всего: blank(), группы: new Map(),
-        })
-      }
-      const cur = m.get(key)
-      add(cur.всего, r)
-      if (!cur.группы.has(r.группа)) cur.группы.set(r.группа, blank())
-      add(cur.группы.get(r.группа), r)
-    }
-    return [...m.values()].sort((a, b) => a.sort - b.sort)
-  }, [data, team])
-
   const plans = data?.plans || []
+
+  const { люди, отдел } = useMemo(() => {
+    const by = new Map()
+    const сумма = blank()
+    for (const r of byTeam(data?.byManager || [], team)) {
+      if (!by.has(r.менеджер)) {
+        by.set(r.менеджер, { менеджер: r.менеджер, работает: r.работает !== false, t: blank() })
+      }
+      add(by.get(r.менеджер).t, r)
+      add(сумма, r)
+    }
+    // Человек без единого договора за период в таблице не нужен: строка из
+    // прочерков ничего не говорит, а место занимает. Ушедшие показываются,
+    // если результаты за период у них были, — их договоры принадлежат отделу.
+    const list = [...by.values()]
+      .filter(m => KEYS.some(k => m.t[k]))
+      .sort((a, b) => b.t.окс_бфл - a.t.окс_бфл || a.менеджер.localeCompare(b.менеджер))
+    return { люди: list, отдел: сумма }
+  }, [data, team])
+
+  const планОтдела = planFor(plans, bounds.from, 'оксвсего', null, team)
+  const label = bounds.from.split('-').reverse().join('.') + ' — ' + bounds.to.split('-').reverse().join('.')
 
   if (loading && !data) return <div className="loading">Загрузка...</div>
 
@@ -167,174 +126,103 @@ export default function RopManagersPage({ team = null }) {
                      min="2026-09-01" max={todayISO()} onChange={e => setTo(e.target.value)} />
             </>
           )}
-          <span className="portal-period-label">
-            {bounds.from.split('-').reverse().join('.')} — {bounds.to.split('-').reverse().join('.')}
-          </span>
+          <span className="portal-period-label">{label}</span>
         </div>
       </div>
 
-      <div className="table-wrap">
-        <div className="table-toolbar">
-          <strong style={{ fontSize: 13 }}>Показатели менеджеров</strong>
-          <span className="portal-muted">
-            щёлкните по строке — развернётся маркетинг и рекомендации
-          </span>
+      <div className="portal-section-head">
+        <h2 className="portal-section-title">Менеджеры</h2>
+        <p className="portal-section-note">
+          План стоит только на договорах БФЛ — АЗ и ВКИ идут счётом, без
+          оценки. Квота считается по каждому отдельно: это и есть то, что
+          человеку говорят на планёрке.
+        </p>
+      </div>
+
+      {люди.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">📭</div>
+          <h3>За этот период договоров нет</h3>
+          <p>Сделки загружены с 1 сентября 2026 года.</p>
         </div>
-        <div className="table-scroll">
-          <table className="table-compact rop-table">
-            <thead>
-              <tr>
-                <th>Менеджер</th>
-                <th>Встречи</th>
-                <th>Брак</th>
-                <th>в брак</th>
-                <th>ИКП</th>
-                <th>встреча→ИКП</th>
-                <th>Договор б/о</th>
-                <th>ИКП→договор</th>
-                <th>Оплата</th>
-                <th>договор→оплата</th>
-                <th>Договоры БФЛ</th>
-                <th>Чек БФЛ</th>
-                <th className="rop-sep">В работе</th>
-                <th>Залежалось</th>
-              </tr>
-            </thead>
-            <tbody>
-              {byManager.map(m => {
-                const t = m.всего
-                const d = dept.всего
-                const planВстречи = planFor(plans, bounds.from, 'встречи', m.менеджер, team)
-                const planОкс = planFor(plans, bounds.from, 'оксвсего', m.менеджер, team)
-                return (
-                  <React.Fragment key={m.менеджер}>
-                    <tr onClick={() => setOpenRow(openRow === m.менеджер ? null : m.менеджер)}
-                        style={{ cursor: 'pointer' }}>
+      ) : (
+        <div className="table-wrap">
+          <div className="table-scroll">
+            <table className="table-compact rop-table">
+              <thead>
+                <tr>
+                  <th style={{ minWidth: 180 }}>Менеджер</th>
+                  <th className="portal-num">Договоры БФЛ</th>
+                  <th className="portal-num">АЗ</th>
+                  <th className="portal-num">ВКИ</th>
+                  <th className="portal-num">Runrate</th>
+                  <th className="portal-num">Квота на день</th>
+                </tr>
+              </thead>
+              <tbody>
+                {люди.map(m => {
+                  const план = planFor(plans, bounds.from, 'оксвсего', m.менеджер, team)
+                  const rr = runRate(m.t.окс_бфл, bounds.from, bounds.to)
+                  const q = quotaPerDay(план, m.t.окс_бфл, bounds.to)
+                  return (
+                    <tr key={m.менеджер}>
                       <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
-                        {openRow === m.менеджер ? '▾ ' : '▸ '}{m.менеджер}
+                        {m.менеджер}
+                        {!m.работает && <span className="rop-left"> уволен</span>}
                       </td>
                       <td className="portal-num">
-                        {formatNum(t.встречи)}
-                        {planВстречи != null && (
-                          <span className={`rop-plan ${planStatus(t.встречи, paceTarget(planВстречи, bounds.from, bounds.to))}`}>
-                            /{formatNum(planВстречи)}
+                        {formatNum(m.t.окс_бфл)}
+                        {план != null && (
+                          <span className={`rop-plan ${planStatus(m.t.окс_бфл, paceTarget(план, bounds.from, bounds.to))}`}>
+                            /{formatNum(план)}
                           </span>
                         )}
                       </td>
-                      <td className="portal-num">{formatNum(t.брак)}</td>
-                      <td className="portal-num"><Conv value={pct(t.брак, t.встречи)} base={pct(d.брак, d.встречи)} inverse /></td>
-                      <td className="portal-num">{formatNum(t.икп)}</td>
-                      <td className="portal-num"><Conv value={pct(t.икп, t.встречи)} base={pct(d.икп, d.встречи)} /></td>
-                      <td className="portal-num">{formatNum(t.договор_без_оплаты)}</td>
-                      <td className="portal-num"><Conv value={pct(t.договор_без_оплаты, t.икп)} base={pct(d.договор_без_оплаты, d.икп)} /></td>
-                      <td className="portal-num">{formatNum(t.оплата)}</td>
-                      <td className="portal-num"><Conv value={pct(t.оплата, t.договор_без_оплаты)} base={pct(d.оплата, d.договор_без_оплаты)} /></td>
-                      <td className="portal-num">
-                        {formatNum(t.окс_бфл)}
-                        {planОкс != null && (
-                          <span className={`rop-plan ${planStatus(t.окс_бфл, paceTarget(planОкс, bounds.from, bounds.to))}`}>
-                            /{formatNum(planОкс)}
-                          </span>
-                        )}
-                      </td>
-                      <td className="portal-num">
-                        {t.чек_бфл_сделок
-                          ? formatMoneyShort(t.чек_бфл_сумма / t.чек_бфл_сделок)
-                          : <span className="td-muted">—</span>}
-                      </td>
-                      {(() => {
-                        const z = запас.get(m.менеджер)
-                        const всего = z ? z.всего + z.приёмка : 0
-                        const доля = z && z.всего ? z.залежалось / z.всего : 0
-                        return (
-                          <>
-                            <td className="portal-num rop-sep">
-                              {всего ? formatNum(всего) : <span className="td-muted">—</span>}
-                            </td>
-                            <td className="portal-num">
-                              {z && z.залежалось
-                                ? <span className={доля > 0.4 ? 'rop-conv bad' : доля > 0.2 ? 'rop-conv warn' : 'rop-conv'}>
-                                    {formatNum(z.залежалось)}
-                                  </span>
-                                : <span className="td-muted">—</span>}
-                            </td>
-                          </>
-                        )
-                      })()}
+                      <td className="portal-num">{formatNum(m.t.окс_аз)}</td>
+                      <td className="portal-num">{formatNum(m.t.окс_вки)}</td>
+                      <td className="portal-num">{rr == null ? <span className="td-muted">—</span> : formatNum(rr)}</td>
+                      <td className="portal-num"><Quota q={q} /></td>
                     </tr>
-
-                    {openRow === m.менеджер && GROUPS.map(g => {
-                      const s = m.группы.get(g.id)
-                      if (!s) return null
-                      // Группа сравнивается со своей же группой по отделу:
-                      // рекомендации доходят втрое лучше маркетинга, и
-                      // мерить их общей средней значило бы хвалить всех,
-                      // у кого рекомендаций просто больше.
-                      const b = dept.группы.get(g.id) || blank()
-                      return (
-                        <tr key={g.id} className="rop-subrow">
-                          <td style={{ paddingLeft: 26 }}>
-                            <span className={`rop-dot ${g.id === 'маркетинг' ? 'mk' : g.id === 'рекомендации' ? 'rec' : 'oth'}`} />
-                            {g.label}
-                          </td>
-                          <td className="portal-num">{formatNum(s.встречи)}</td>
-                          <td className="portal-num">{formatNum(s.брак)}</td>
-                          <td className="portal-num"><Conv value={pct(s.брак, s.встречи)} base={pct(b.брак, b.встречи)} inverse /></td>
-                          <td className="portal-num">{formatNum(s.икп)}</td>
-                          <td className="portal-num"><Conv value={pct(s.икп, s.встречи)} base={pct(b.икп, b.встречи)} /></td>
-                          <td className="portal-num">{formatNum(s.договор_без_оплаты)}</td>
-                          <td className="portal-num"><Conv value={pct(s.договор_без_оплаты, s.икп)} base={pct(b.договор_без_оплаты, b.икп)} /></td>
-                          <td className="portal-num">{formatNum(s.оплата)}</td>
-                          <td className="portal-num"><Conv value={pct(s.оплата, s.договор_без_оплаты)} base={pct(b.оплата, b.договор_без_оплаты)} /></td>
-                          <td className="portal-num">{formatNum(s.окс_бфл)}</td>
-                          <td className="portal-num">
-                            {s.чек_бфл_сделок
-                              ? formatMoneyShort(s.чек_бфл_сумма / s.чек_бфл_сделок)
-                              : <span className="td-muted">—</span>}
-                          </td>
-                          <td className="rop-sep" />
-                          <td />
-                        </tr>
-                      )
-                    })}
-                  </React.Fragment>
-                )
-              })}
-            </tbody>
-          </table>
+                  )
+                })}
+                <tr className="rop-row-total">
+                  <td style={{ fontWeight: 700 }}>Отдел целиком</td>
+                  <td className="portal-num">
+                    {formatNum(отдел.окс_бфл)}
+                    {планОтдела != null && (
+                      <span className={`rop-plan ${planStatus(отдел.окс_бфл, paceTarget(планОтдела, bounds.from, bounds.to))}`}>
+                        /{formatNum(планОтдела)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="portal-num">{formatNum(отдел.окс_аз)}</td>
+                  <td className="portal-num">{formatNum(отдел.окс_вки)}</td>
+                  <td className="portal-num">
+                    {formatNum(runRate(отдел.окс_бфл, bounds.from, bounds.to))}
+                  </td>
+                  <td className="portal-num">
+                    <Quota q={quotaPerDay(планОтдела, отдел.окс_бфл, bounds.to)} />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="rop-footer">
-        Конверсии считаются внутри одной сделки по истории переходов — значит
-        сделка попадает в числитель каждого этапа, через который прошла, а не
-        только того, где стоит сейчас. Сделка могла попасть на этап, минуя
-        предыдущий, поэтому конверсия иногда больше ста процентов — такие
-        числа помечены. Цвет конверсии — это сравнение с отделом за тот же
-        период, а не с абсолютной нормой: нормы у нас нет, а порог, взятый с
-        потолка, оценивал бы людей по выдуманному числу. «Договоры БФЛ» идут
-        без конверсии: договор оформляется отдельной карточкой и к встрече
-        этого периода не относится. Договор считается банкротным по депозиту
-        АУ среди позиций, а не по названию услуги. «Чек БФЛ» — по тем же
-        сделкам, без ФПА. План рядом с фактом месячный, а цвет у него —
-        по темпу на сегодняшний день. Две последние колонки за линией — это не
-        период, а снимок на сегодня: сколько сделок у человека в работе и
-        сколько из них стоит дольше нормы своего этапа. Разбор по ним — на
-        вкладке «Портфель».
+        Договор считается банкротным по депозиту арбитражного управляющего
+        среди позиций, а не по названию услуги. АЗ и ВКИ продаются поверх
+        договора, поэтому одна сделка может попасть и в БФЛ, и в АЗ —
+        колонки намеренно не складываются в одну сумму. Runrate — сколько
+        выйдет к концу периода, если дальше пойдёт как сейчас; для
+        закрытого периода он равен факту. Квота — сколько договоров надо
+        заключать каждый оставшийся день, считая сегодняшний: (план − факт)
+        ÷ оставшиеся дни. План на отдел не задаётся отдельно, он равен сумме
+        планов менеджеров{планОтдела != null && люди.length
+          ? ` — сейчас это ${formatNum(планОтдела)} ${plural(планОтдела, 'договор', 'договора', 'договоров')}`
+          : ''}.
       </div>
     </div>
   )
-}
-
-const KEYS = ['встречи', 'брак', 'икп', 'договор_без_оплаты', 'оплата',
-  'окс_всего', 'окс_бфл', 'окс_аз', 'окс_вки', 'чек_бфл_сумма', 'чек_бфл_сделок']
-
-function blank() {
-  const o = {}
-  for (const k of KEYS) o[k] = 0
-  return o
-}
-
-function add(acc, row) {
-  for (const k of KEYS) acc[k] += Number(row[k] || 0)
 }

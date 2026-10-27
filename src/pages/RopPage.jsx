@@ -4,8 +4,6 @@ import { supabase } from '../lib/supabase.js'
 import RopDashboardPage from './RopDashboardPage.jsx'
 import RopManagersPage from './RopManagersPage.jsx'
 import RopPlansPage from './RopPlansPage.jsx'
-import RopPortfolioPage from './RopPortfolioPage.jsx'
-import RopTodayPage from './RopTodayPage.jsx'
 
 // ============================================================================
 // Кабинет руководителя отдела продаж.
@@ -21,28 +19,26 @@ import RopTodayPage from './RopTodayPage.jsx'
 // их не выводит интерфейс: база не отдаёт их роли РОПа (см. миграцию
 // 20261019_rop_role) — запрос мимо приложения вернёт столько же.
 //
-// ВКЛАДКА «ПЛАНЫ» ЕСТЬ ТОЛЬКО У АДМИНА. План ставит руководитель
-// направления; РОП свой план видит на дашборде, но изменить его не может —
-// и не потому, что вкладка спрятана: политика admin_write на rop_plans
-// просто не даст записи.
+// ПЛАНЫ СТАВИТ САМ РУКОВОДИТЕЛЬ ОТДЕЛА, по своим менеджерам. Право на это
+// проверяется в базе, а не в интерфейсе: политика на rop_plans пускает его
+// к строкам своего отдела и никуда больше.
+//
+// ТРИ ВКЛАДКИ, И ЭТО НАМЕРЕННО. Были пять: «Сегодня» со списком дел,
+// «Итоги» с одиннадцатью блоками, «Портфель» с запасом сделок. Кабинет,
+// который объясняет всё, не отвечает на главный вопрос — сколько договоров
+// и сколько осталось. Экраны «Сегодня» и «Портфель» не удалены из кода, они
+// просто не подключены: вернуть их — одна строка здесь.
 // ============================================================================
 
 const TABS = [
-  // «Сегодня» первым намеренно: руководитель отдела открывает кабинет с
-  // вопросом «кого дёрнуть», а не «как дела». Итоги на соседней вкладке.
-  { id: 'today', label: 'Сегодня' },
-  { id: 'dash', label: 'Итоги' },
-  { id: 'portfolio', label: 'Портфель' },
+  { id: 'dash', label: 'Главное' },
   { id: 'managers', label: 'Менеджеры' },
-  // Планы ставит и РОП — но только по своим менеджерам. Строку отдела
-  // целиком форма ему не даст: это обязательство перед направлением, и
-  // право на него проверяется в базе, а не в интерфейсе.
   { id: 'plans', label: 'Планы' },
 ]
 
-export default function RopPage({ standalone = false, isAdmin = false }) {
+export default function RopPage({ standalone = false }) {
   const { session, signOut } = useAuth()
-  const [tab, setTab] = useState('today')
+  const [tab, setTab] = useState('dash')
 
   // Отделов продаж два, и у каждого свой руководитель. База отдаёт роли rop
   // только её собственный, поэтому список из одной строки означает «выбирать
@@ -96,11 +92,9 @@ export default function RopPage({ standalone = false, isAdmin = false }) {
           </p>
         </div>
       )}
-      {!noTeam && tab === 'today' && <RopTodayPage team={team} />}
       {!noTeam && tab === 'dash' && <RopDashboardPage team={team} />}
-      {!noTeam && tab === 'portfolio' && <RopPortfolioPage team={team} />}
       {!noTeam && tab === 'managers' && <RopManagersPage team={team} />}
-      {!noTeam && tab === 'plans' && <RopPlansPage team={team} isAdmin={isAdmin} />}
+      {!noTeam && tab === 'plans' && <RopPlansPage team={team} />}
     </>
   )
 
