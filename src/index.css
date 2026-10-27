@@ -674,6 +674,13 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
   gap: 10px; margin-bottom: 12px; align-items: start;
 }
 .rop-metrics > div { height: 100%; }
+/* Вторая строка — темп и квота. Это не факты, а выводы из фактов, поэтому
+   плитки не растягиваются на всю ширину: растянутая плитка читается как
+   более важная, а она менее важна, чем проданные продукты над ней. */
+.rop-metrics.rop-metrics-calc {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 240px));
+  justify-content: start;
+}
 .rop-metric {
   background: var(--white); border: 1px solid var(--border);
   border-left: 3px solid var(--border);
@@ -764,6 +771,8 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 
 @media (max-width: 760px) {
   .rop-metrics { grid-template-columns: repeat(2, 1fr); }
+  /* На телефоне ограничение по ширине только мешает: места и так нет. */
+  .rop-metrics.rop-metrics-calc { grid-template-columns: repeat(2, 1fr); }
   .rop-metric { padding: 12px 14px; }
   .rop-metric-value { font-size: 22px; }
   .rop-metric.big .rop-metric-value { font-size: 26px; }
