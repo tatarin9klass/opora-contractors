@@ -8,10 +8,19 @@ import { todayISO, weekStartOf, addDaysISO } from '../lib/dateContext.js'
 // Бесплатный трафик — расход всегда 0, поле ввода не нужно вообще.
 const PARTIAL = 'Абонентка + бюджет'
 
+// Текущая неделя идёт в списке первой, но выбирается не она.
+//
+// РАНЬШЕ ЕЁ НЕ БЫЛО ВОВСЕ: расход вводится по итогам недели, и до четверга
+// вводить его нечем. На практике бывает, что подрядчик называет сумму
+// заранее, и ждать сутки ради записи цифры, которая уже известна, незачем.
+//
+// ПО УМОЛЧАНИЮ ВСЁ РАВНО СТОИТ ЗАКРЫТАЯ НЕДЕЛЯ. Расход, записанный не в ту
+// неделю, не выглядит ошибкой — он выглядит плохим CPL, и ищут его потом
+// долго. Текущую неделю нужно выбрать руками, и она подписана.
 function weekOptions() {
   const currentWeekThu = weekStartOf(todayISO())
   const weeks = []
-  for (let i = 1; i <= 10; i++) {
+  for (let i = 0; i <= 10; i++) {
     weeks.push(addDaysISO(currentWeekThu, -7 * i))
   }
   return weeks
@@ -19,7 +28,8 @@ function weekOptions() {
 
 export default function WeeklyExpensesPage() {
   const weeks = useMemo(weekOptions, [])
-  const [selectedWeek, setSelectedWeek] = useState(weeks[0])
+  const текущая = weeks[0]
+  const [selectedWeek, setSelectedWeek] = useState(weeks[1])
   const [enteredBy, setEnteredBy] = useState('')
   const [contractors, setContractors] = useState([])
   const [sources, setSources] = useState([])
@@ -40,7 +50,10 @@ export default function WeeklyExpensesPage() {
       const set = new Set((data || []).map(r => r.week_start))
       setFrozenWeeks(set)
       if (set.has(selectedWeek)) {
-        const firstOpen = weeks.find(w => !set.has(w))
+        // Ищем среди закрытых недель и только потом соглашаемся на текущую:
+        // подставлять незакрытую неделю молча нельзя.
+        const firstOpen = weeks.slice(1).find(w => !set.has(w))
+          || (set.has(weeks[0]) ? null : weeks[0])
         if (firstOpen) setSelectedWeek(firstOpen)
       }
     })
@@ -342,7 +355,12 @@ export default function WeeklyExpensesPage() {
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
           <select className="form-select" style={{ maxWidth: 260 }} value={selectedWeek} onChange={e => { setSelectedWeek(e.target.value); setManualInputs({}) }}>
-            {selectableWeeks.map(w => <option key={w} value={w}>{formatDate(w)} — {formatDate(addDaysISO(w, 6))}</option>)}
+            {selectableWeeks.map(w => (
+              <option key={w} value={w}>
+                {formatDate(w)} — {formatDate(addDaysISO(w, 6))}
+                {w === текущая ? ' · текущая, ещё не закрыта' : ''}
+              </option>
+            ))}
           </select>
           <input className="form-input" style={{ maxWidth: 220 }} value={enteredBy} onChange={e => setEnteredBy(e.target.value)} placeholder="Кто вносит расход" />
           <button className="btn btn-primary" onClick={saveAll} disabled={saving}>
@@ -350,6 +368,13 @@ export default function WeeklyExpensesPage() {
           </button>
           {savedAt && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Сохранено {savedAt.toLocaleTimeString('ru-RU')}</span>}
         </div>
+        {selectedWeek === текущая && (
+          <div className="alert alert-warning" style={{ marginTop: 10, marginBottom: 0 }}>
+            Неделя ещё идёт. Расход запишется целиком, а лиды за оставшиеся дни
+            ещё не пришли — пока неделя не закроется, CPL и CPO по ней будут
+            завышены. Это не ошибка ввода, цифры сойдутся сами в четверг.
+          </div>
+        )}
         <div className="form-hint" style={{ marginTop: 8 }}>
           Фикс и Абонентка считаются автоматически — поле недоступно для редактирования. Для «Абонентка + бюджет» нужно ввести только рекламный бюджет за неделю, доля абонентки прибавится сама.
         </div>
