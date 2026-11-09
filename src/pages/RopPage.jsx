@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase.js'
 import RopDashboardPage from './RopDashboardPage.jsx'
 import RopManagersPage from './RopManagersPage.jsx'
 import RopPlansPage from './RopPlansPage.jsx'
+import Freshness from '../components/Freshness.jsx'
 
 // ============================================================================
 // Кабинет руководителя отдела продаж.
@@ -79,6 +80,7 @@ export default function RopPage({ standalone = false }) {
             {(teams || []).map(t => <option key={t.отдел} value={t.отдел}>{t.название}</option>)}
           </select>
         )}
+        <Freshness набор="Сделки отдела продаж" />
       </div>
       {noTeam && (
         <div className="empty-state" style={{ marginTop: 24 }}>

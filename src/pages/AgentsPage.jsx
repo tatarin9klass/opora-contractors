@@ -5,6 +5,7 @@ import { loadAgents, periodBounds, recentMonths } from '../lib/agents.js'
 import AgentsMainPage from './AgentsMainPage.jsx'
 import AgentsListPage from './AgentsListPage.jsx'
 import AgentsOverduePage from './AgentsOverduePage.jsx'
+import Freshness from '../components/Freshness.jsx'
 
 // ============================================================================
 // Кабинет руководителя агентской сети.
@@ -77,6 +78,7 @@ export default function AgentsPage({ standalone = false }) {
           <button key={t.id} className={`rop-tab ${tab === t.id ? 'active' : ''}`}
                   onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
+        <Freshness набор="Агентская сеть" />
       </div>
 
       {error && <div className="alert alert-danger" style={{ marginBottom: 16 }}>{error}</div>}
