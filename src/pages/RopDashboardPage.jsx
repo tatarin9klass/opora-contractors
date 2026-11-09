@@ -258,6 +258,10 @@ export default function RopDashboardPage({ team = null }) {
     () => (prev ? sumRows(byTeam(prev.daily || [], team)) : null),
     [prev, team],
   )
+  // «Период закрыт» определяется датой, а не сравнением темпа с фактом.
+  // При нуле договоров темп тоже ноль, они совпадали, и открытый ноябрь
+  // подписывался закрытым.
+  const закрыт = bounds.to < todayISO()
   const rr = runRate(total.окс_бфл, bounds.from, bounds.to)
   const квота = quotaPerDay(план, total.окс_бфл, bounds.to)
   const ряд = dailySeries(rows, bounds.from, bounds.to, план)
@@ -346,7 +350,7 @@ export default function RopDashboardPage({ team = null }) {
             которой в нём нет. */}
         <Metric
           label="Runrate по БФЛ" fact={rr} plan={план} unit="шт" additive={false}
-          sub={rr === total.окс_бфл ? 'период закрыт' : 'при текущем темпе'}
+          sub={закрыт ? 'период закрыт' : 'при текущем темпе'}
         />
         {/* Квота отвечает на единственный вопрос, который остаётся после
             плана и факта: сколько надо делать начиная с сегодня. В отличие
