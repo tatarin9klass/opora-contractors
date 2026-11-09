@@ -16,15 +16,45 @@ export { periodBounds, recentMonths, monthBounds } from './rop.js'
 // ============================================================================
 
 export async function loadAgents(fromISO, toISO) {
-  const [funnel, flow, daily, overdue] = await Promise.all([
+  const [funnel, flow, daily, overdue, moves] = await Promise.all([
     fetchAllRows(() => supabase.from('agents_portal_funnel').select('*').order('sort_order')),
     fetchAllRows(() => supabase.from('agents_portal_flow').select('*')
       .gte('дата', fromISO).lte('дата', toISO)),
     fetchAllRows(() => supabase.from('agents_portal_daily').select('*')
       .gte('дата', fromISO).lte('дата', toISO)),
     fetchAllRows(() => supabase.from('agents_portal_overdue').select('*')),
+    fetchAllRows(() => supabase.from('agents_portal_moves').select('*')
+      .gte('дата', fromISO).lte('дата', toISO)),
   ])
-  return { funnel, flow, daily, overdue }
+  return { funnel, flow, daily, overdue, moves }
+}
+
+// Матрица переходов за период: откуда, куда, сколько раз.
+//
+// ОНА ОТВЕЧАЕТ НА ВОПРОС, КОТОРОГО НЕТ В ПЛИТКАХ. Под ступенью стоят «+» и
+// «−», и по ним не видно направления: откат вниз выглядит как плюс на
+// нижней ступени, то есть как рост. На живых данных за октябрь-ноябрь со
+// ступени «Активный» ушло четырнадцать человек, а в «Профи» не пришёл ни
+// один — все четырнадцать откатились.
+export function movesMatrix(moves) {
+  const by = new Map()
+  let вперёд = 0, назад = 0, прочее = 0
+  for (const m of moves) {
+    const k = m.откуда_id + '>' + m.куда_id
+    const c = by.get(k) || {
+      key: k, откуда: m.откуда, куда: m.куда,
+      направление: m.направление, переходов: 0,
+    }
+    c.переходов += Number(m.переходов || 0)
+    by.set(k, c)
+    const n = Number(m.переходов || 0)
+    if (m.направление === 'вперёд') вперёд += n
+    else if (m.направление === 'назад') назад += n
+    else прочее += n
+  }
+  const list = [...by.values()].sort((a, b) => b.переходов - a.переходов)
+  const всего = вперёд + назад + прочее
+  return { list, вперёд, назад, прочее, всего, доляНазад: всего ? Math.round(100 * назад / всего) : 0 }
 }
 
 const ZERO = { лиды: 0, квалы: 0, встречи: 0, сделки: 0, выручка: 0 }

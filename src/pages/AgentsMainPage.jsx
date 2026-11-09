@@ -1,5 +1,5 @@
 import React from 'react'
-import { flowByStage, totals, byPrefix, aov, pct } from '../lib/agents.js'
+import { flowByStage, totals, byPrefix, aov, pct, movesMatrix } from '../lib/agents.js'
 import { useSort, Th } from '../lib/sortable.jsx'
 import { formatNum } from '../lib/helpers.js'
 import { formatMoneyShort } from '../lib/rop.js'
@@ -43,6 +43,7 @@ export default function AgentsMainPage({ data, label }) {
   const t = totals(daily)
   const prefixes = apply(byPrefix(daily))
   const всегоАгентов = funnel.reduce((a, s) => a + Number(s.агентов || 0), 0)
+  const m = movesMatrix(data?.moves || [])
 
   return (
     <>
@@ -67,6 +68,61 @@ export default function AgentsMainPage({ data, label }) {
         входят: они лежат в тех же стадиях, что живые люди, и искажали бы
         картину.
       </div>
+
+      {/* МАТРИЦА ПЕРЕХОДОВ ЗАКРЫВАЕТ ДЫРУ В ПЛИТКАХ. По «+» и «−» не видно
+          направления: откат вниз выглядит как плюс на нижней ступени, то
+          есть как рост. Здесь видно, кто куда двинулся на самом деле. */}
+      {m.всего > 0 && (
+        <>
+          <div className="portal-section-head">
+            <h2 className="portal-section-title">Куда двигались</h2>
+            <p className="portal-section-note">
+              Все переходы за {label}. Вверх — агент набрал клиентов, вниз —
+              потерял. По плиткам выше этого не видно: откат выглядит там
+              как «+» на нижней ступени.
+            </p>
+          </div>
+
+          <div className="rop-metrics rop-metrics-calc">
+            <div className="rop-metric ok">
+              <div className="rop-metric-label">Выросли</div>
+              <div className="rop-metric-value">{formatNum(m.вперёд)}</div>
+              <div className="rop-metric-sub">переходов вверх</div>
+            </div>
+            <div className={`rop-metric ${m.доляНазад >= 20 ? 'bad' : 'warn'}`}>
+              <div className="rop-metric-label">Откатились</div>
+              <div className="rop-metric-value">{formatNum(m.назад)}</div>
+              <div className="rop-metric-sub">{m.доляНазад}% всех переходов</div>
+            </div>
+          </div>
+
+          <div className="table-wrap">
+            <div className="table-scroll">
+              <table className="table-compact rop-table">
+                <thead>
+                  <tr>
+                    <th style={{ minWidth: 190 }}>Откуда</th>
+                    <th style={{ minWidth: 190 }}>Куда</th>
+                    <th className="portal-num">Переходов</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {m.list.map(r => (
+                    <tr key={r.key}>
+                      <td>{r.откуда}</td>
+                      <td>
+                        {r.куда}
+                        {r.направление === 'назад' && <span className="ag-warn"> откат</span>}
+                      </td>
+                      <td className="portal-num">{formatNum(r.переходов)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="portal-section-head">
         <h2 className="portal-section-title">Приведено агентами</h2>
