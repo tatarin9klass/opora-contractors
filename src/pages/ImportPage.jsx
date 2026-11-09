@@ -5,6 +5,7 @@ import { computeDateContext } from '../lib/dateContext.js'
 
 const FUNCTION_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/bitrix-import'
 const ROP_FUNCTION_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/rop-deals'
+const AGENTS_FUNCTION_URL = 'https://jgmuuehxavwlrfkonnzx.supabase.co/functions/v1/agents-import'
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXV1ZWh4YXZ3bHJma29ubnp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNzY4MzAsImV4cCI6MjA5NzY1MjgzMH0.BvX2ZBVSs17Vuwq_ok_e_QyAck0FG2yYTtuOkbaUrqU'
 
 const DAY_NAMES = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']
@@ -20,6 +21,9 @@ export default function ImportPage() {
   const [ropLoading, setRopLoading] = useState(false)
   const [ropResult, setRopResult] = useState(null)
   const [ropError, setRopError] = useState(null)
+  const [agentsLoading, setAgentsLoading] = useState(false)
+  const [agentsResult, setAgentsResult] = useState(null)
+  const [agentsError, setAgentsError] = useState(null)
 
   // computeDateContext() пересчитывается не только при монтировании, но и при
   // возврате фокуса на вкладку — чтобы "сегодня" не залипало, если вкладка
@@ -138,6 +142,49 @@ export default function ImportPage() {
       setRopError(String(e))
     }
     setRopLoading(false)
+  }
+
+  // --------------------------------------------------------------------------
+  // Агентская сеть. Устроено так же, как загрузка сделок отдела: функция
+  // идёт фазами и запоминает место, кнопка ходит по кругу до done.
+  //
+  // ПРОХОД ВСЕГДА ПОЛНЫЙ. Поле «СП агенты» проставляют и задним числом —
+  // лид мог прийти в апреле, а агента к нему привязать вчера. Догружать
+  // только новое значит никогда не увидеть такую привязку.
+  // --------------------------------------------------------------------------
+  const AGENT_PHASES = {
+    agents: 'карточки агентов', history: 'история стадий',
+    leads: 'лиды', deals: 'сделки',
+  }
+
+  async function runAgentsImport() {
+    setAgentsLoading(true)
+    setAgentsError(null)
+    setAgentsResult(null)
+    try {
+      let body = { reset: true }
+      const totals = { agents: 0, history: 0, leads: 0, deals: 0, removed: 0 }
+      for (let pass = 1; pass <= 20; pass++) {
+        const res = await fetch(AGENTS_FUNCTION_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}`, 'apikey': ANON_KEY },
+          body: JSON.stringify(body),
+        })
+        const json = await res.json()
+        if (!json.success) { setAgentsError(json.error || 'Неизвестная ошибка'); break }
+        totals.agents += Number(json.agents_upserted || 0)
+        totals.history += Number(json.history_upserted || 0)
+        totals.leads += Number(json.leads_upserted || 0)
+        totals.deals += Number(json.deals_upserted || 0)
+        totals.removed += Number(json.removed || 0)
+        setAgentsResult({ ...json, pass, totals: { ...totals } })
+        if (json.done) break
+        body = {}
+      }
+    } catch (e) {
+      setAgentsError(String(e))
+    }
+    setAgentsLoading(false)
   }
 
   async function linkSource(unmatchedId, sourceMarker, contractorId) {
@@ -287,6 +334,42 @@ export default function ImportPage() {
               : `Идёт ${ROP_PHASES[ropResult.phase] || ropResult.phase}: `}
             {' '}сделок {ropResult.totals?.deals ?? 0}, позиций {ropResult.totals?.products ?? 0},
             {' '}записей истории {ropResult.totals?.stages ?? 0}.
+          </div>
+        )}
+      </div>
+
+      <div className="info-card" style={{ maxWidth: 760, marginBottom: 16 }}>
+        <div className="info-card-title">Агентская сеть</div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
+          Питает кабинет руководителя агентской сети: карточки агентов из
+          смарт-процесса, их движение по стадиям, а также лиды и сделки, у
+          которых заполнено поле «СП агенты». Читается целиком каждый раз —
+          агента к лиду привязывают и задним числом, поэтому догружать только
+          новое нельзя. Кнопку нажимают один раз, дальше она ходит сама.
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={runAgentsImport} disabled={agentsLoading}>
+            {agentsLoading ? 'Загружаем...' : '🤝 Загрузить агентскую сеть'}
+          </button>
+          {agentsLoading && agentsResult && (
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              проход {agentsResult.pass} · {AGENT_PHASES[agentsResult.phase] || agentsResult.phase}
+            </span>
+          )}
+        </div>
+
+        {agentsError && <div className="alert alert-danger" style={{ marginTop: 12 }}>🔴 Ошибка загрузки: {agentsError}</div>}
+
+        {agentsResult && !agentsError && (
+          <div className="alert alert-info" style={{ marginTop: 12 }}>
+            {agentsResult.done
+              ? `✅ Загрузка завершена за ${agentsResult.pass} ${agentsResult.pass === 1 ? 'проход' : agentsResult.pass < 5 ? 'прохода' : 'проходов'}.`
+              : `Идёт ${AGENT_PHASES[agentsResult.phase] || agentsResult.phase}: `}
+            {' '}агентов {agentsResult.totals?.agents ?? 0}, записей истории {agentsResult.totals?.history ?? 0},
+            {' '}лидов {agentsResult.totals?.leads ?? 0}, сделок {agentsResult.totals?.deals ?? 0}.
+            {agentsResult.done && agentsResult.totals?.removed
+              ? ` Отвязано и удалено строк: ${agentsResult.totals.removed}.`
+              : ''}
           </div>
         )}
       </div>
