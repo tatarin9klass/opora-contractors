@@ -34,6 +34,15 @@ const BITRIX_WEBHOOK = "https://stopdolg.bitrix24.ru/rest/2708/krxomqqp0tb1b0jc"
 const CATEGORY_ID = 34;            // воронка «Продажа БФЛ»
 const DEALS_FROM = "2026-09-01";   // глубина истории — по решению руководителя
 
+// Дата входа в стадию «Полная / частичная оплата». ЭТО ТО ЖЕ ПОЛЕ, ПО
+// КОТОРОМУ СЧИТАЕТ ДАШБОРД ПОДРЯДЧИКОВ, и берём мы его именно поэтому:
+// пока кабинет РОПа считал договоры по истории стадий, а дашборд по полю,
+// две страницы одного приложения показывали разные цифры за один месяц.
+// У поля есть и второе достоинство — одна дата на сделку. История стадий
+// записывает каждый вход, и сделка, вернувшаяся на оплату второй раз,
+// считалась дважды.
+const DEAL_PAID_DATE_FIELD = "UF_CRM_1744372636";
+
 const TIME_BUDGET_MS = 90_000;
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -306,7 +315,7 @@ Deno.serve(async (req) => {
         select: [
           "ID", "TITLE", "CATEGORY_ID", "STAGE_ID", "OPPORTUNITY", "CLOSED",
           "ASSIGNED_BY_ID", "LEAD_ID", "SOURCE_ID",
-          "DATE_CREATE", "CLOSEDATE", "MOVED_TIME",
+          "DATE_CREATE", "CLOSEDATE", "MOVED_TIME", DEAL_PAID_DATE_FIELD,
         ],
         order: { ID: "ASC" },
         start: dealsStart,
@@ -363,6 +372,7 @@ Deno.serve(async (req) => {
         date_create: toIso(d.DATE_CREATE),
         closedate: toIso(d.CLOSEDATE),
         moved_time: toIso(d.MOVED_TIME),
+        paid_at: toIso(d[DEAL_PAID_DATE_FIELD]),
         synced_at: new Date().toISOString(),
         };
       });
