@@ -668,6 +668,31 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
    ему один отдел. */
 .rop-team { margin-left: auto; align-self: center; margin-bottom: 6px; max-width: 220px; }
 
+/* ---- Агентская сеть ---- */
+/* Воронка читается слева направо, ступенями, поэтому это полоса, а не
+   сетка: сетка переносит колонки и ломает последовательность. */
+.ag-funnel {
+  display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 8px;
+}
+.ag-stage {
+  flex: 1 1 0; min-width: 150px;
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 12px 14px;
+}
+.ag-stage-name {
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .02em; min-height: 26px;
+}
+.ag-stage-count { font-size: 26px; font-weight: 700; line-height: 1.15; margin: 2px 0 4px; }
+.ag-stage-delta { display: flex; gap: 10px; font-size: 12px; font-weight: 600; }
+.ag-stage-delta .up { color: var(--green-primary); }
+.ag-stage-delta .down { color: #d93025; }
+.ag-stage-delta .zero { color: var(--text-muted); font-weight: 500; }
+/* Пометка «не свой канал»: предупреждение, а не ошибка — лид засчитан,
+   просто выплата по нему не начислится. */
+.ag-warn { font-size: 11px; font-weight: 600; color: #b8560f; margin-left: 6px; }
+.rop-metric.clickable:hover { border-color: var(--green-primary); }
+
 /* Плитки план/факт */
 .rop-metrics {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));

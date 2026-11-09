@@ -17,6 +17,7 @@ import ApExpensesPage from './pages/ApExpensesPage.jsx'
 import PortalPage from './pages/PortalPage.jsx'
 import PortalAccessPage from './pages/PortalAccessPage.jsx'
 import RopPage from './pages/RopPage.jsx'
+import AgentsPage from './pages/AgentsPage.jsx'
 import { AuthProvider, useAuth } from './lib/auth.jsx'
 
 const PAGE_TITLES = {
@@ -47,7 +48,7 @@ const AVTP_PAGES = new Set(['channels', 'channel', 'apimport', 'apexpenses', 'ap
 const ADMIN_ONLY_PAGES = new Set(['import', 'expenses', 'apimport', 'apexpenses', 'access'])
 
 function AppShell() {
-  const { session, profile, isAdmin, isContractor, isRop, loading, signOut } = useAuth()
+  const { session, profile, isAdmin, isContractor, isRop, isAgentLead, loading, signOut } = useAuth()
   const [direction, setDirectionState] = useState('bfl')
   const [page, setPage] = useState('dashboard')
   const [passportId, setPassportId] = useState(null)
@@ -105,6 +106,11 @@ function AppShell() {
   // вкладка ввода планов ему не передаётся.
   if (isRop) return <RopPage standalone />
 
+  // Руководитель агентской сети: тот же приём, что с РОПом. Видит только
+  // агентов и то, что они привели; расходов и подрядчиков база ему не
+  // отдаёт вовсе.
+  if (isAgentLead) return <AgentsPage standalone />
+
   const safePage = !isAdmin && ADMIN_ONLY_PAGES.has(page) ? (HOME_PAGE[direction] || 'dashboard') : page
   // Направление считаем по самому разделу, а не по стейту — так подсветка меню
   // и заголовок не разъедутся, если раздел и направление на миг разошлись.
@@ -149,6 +155,7 @@ function AppShell() {
           {safePage === 'apattr' && <ApAttributionPage />}
           {safePage === 'access' && <PortalAccessPage />}
           {safePage === 'rop' && <RopPage />}
+          {safePage === 'agents' && <AgentsPage />}
         </div>
       </div>
     </div>
