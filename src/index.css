@@ -693,6 +693,14 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
 .ag-warn { font-size: 11px; font-weight: 600; color: #b8560f; margin-left: 6px; }
 .rop-metric.clickable:hover { border-color: var(--green-primary); }
 
+/* Сортируемые заголовки. Стрелка стоит всегда — иначе непонятно, что по
+   столбцу вообще можно щёлкнуть; у неактивных она бледная. */
+th.th-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.th-sortable:hover { color: var(--green-primary); }
+th.th-sortable .th-arrow { margin-left: 4px; opacity: .3; font-weight: 400; }
+th.th-sortable.active { color: var(--green-primary); }
+th.th-sortable.active .th-arrow { opacity: 1; }
+
 /* Плитки план/факт */
 .rop-metrics {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));

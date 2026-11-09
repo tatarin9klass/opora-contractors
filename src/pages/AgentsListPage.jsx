@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { byAgent, totals, aov, pct } from '../lib/agents.js'
+import { useSort, Th } from '../lib/sortable.jsx'
 import { formatNum } from '../lib/helpers.js'
 import { formatMoneyShort } from '../lib/rop.js'
 
@@ -18,8 +19,9 @@ import { formatMoneyShort } from '../lib/rop.js'
 
 export default function AgentsListPage({ data, label }) {
   const [open, setOpen] = useState(null)
+  const { sort, onSort, apply } = useSort('лиды')
   const daily = data?.daily || []
-  const люди = byAgent(daily)
+  const люди = apply(byAgent(daily))
   const t = totals(daily)
 
   if (!люди.length) {
@@ -39,7 +41,8 @@ export default function AgentsListPage({ data, label }) {
         <p className="portal-section-note">
           За {label}, по убыванию лидов. Щёлкните по строке — развернётся
           разбивка по префиксам: через какие каналы человек передавал.
-          «Мимо» — доля лидов, пришедших не через agbfl.
+          «Мимо» — доля лидов, пришедших не через agbfl. Любой заголовок
+          столбца сортирует таблицу.
         </p>
       </div>
 
@@ -48,17 +51,17 @@ export default function AgentsListPage({ data, label }) {
           <table className="table-compact rop-table">
             <thead>
               <tr>
-                <th style={{ minWidth: 200 }}>Агент</th>
-                <th className="portal-num">Лиды</th>
-                <th className="portal-num">Квалы</th>
-                <th className="portal-num">лид→квал</th>
-                <th className="portal-num">Встречи</th>
-                <th className="portal-num">квал→встреча</th>
-                <th className="portal-num">Сделки</th>
-                <th className="portal-num">встреча→сделка</th>
-                <th className="portal-num">Revenue</th>
-                <th className="portal-num">AOV</th>
-                <th className="portal-num">Мимо</th>
+                <Th sort={sort} onSort={onSort} k="агент" textual>Агент</Th>
+                <Th sort={sort} onSort={onSort} k="лиды" className="portal-num">Лиды</Th>
+                <Th sort={sort} onSort={onSort} k="квалы" className="portal-num">Квалы</Th>
+                <Th sort={sort} onSort={onSort} k="к_квал" className="portal-num">лид→квал</Th>
+                <Th sort={sort} onSort={onSort} k="встречи" className="portal-num">Встречи</Th>
+                <Th sort={sort} onSort={onSort} k="к_встреча" className="portal-num">квал→встреча</Th>
+                <Th sort={sort} onSort={onSort} k="сделки" className="portal-num">Сделки</Th>
+                <Th sort={sort} onSort={onSort} k="к_сделка" className="portal-num">встреча→сделка</Th>
+                <Th sort={sort} onSort={onSort} k="выручка" className="portal-num">Revenue</Th>
+                <Th sort={sort} onSort={onSort} k="aov" className="portal-num">AOV</Th>
+                <Th sort={sort} onSort={onSort} k="мимо" className="portal-num">Мимо</Th>
               </tr>
             </thead>
             <tbody>

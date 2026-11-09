@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { overdueBuckets } from '../lib/agents.js'
+import { useSort, Th } from '../lib/sortable.jsx'
 import { formatNum, plural } from '../lib/helpers.js'
 
 // ============================================================================
@@ -9,14 +10,14 @@ import { formatNum, plural } from '../lib/helpers.js'
 // просроченным: он мог привести лид вчера, а сделка ещё в работе. Молчание
 // видно только по лидам.
 //
-// ПОРОГИ НАКОПИТЕЛЬНЫЕ: «более 30» включает и тех, кто молчит сто дней.
-// Так и спрошено, и так честнее — иначе плитка «более 30» показывала бы
-// меньше, чем есть на самом деле замолчавших.
+// ГРУППЫ НЕ ПЕРЕСЕКАЮТСЯ: каждый агент ровно в одной. Накопительные пороги
+// на живых данных давали 305 / 210 / 154 — по таким числам нельзя сказать,
+// сколько людей в какой беде, потому что это одни и те же люди трижды. Без
+// пересечений те же данные читаются как 95 / 56 / 154, и сразу видно, что
+// основная масса не «подзабыла», а потеряна.
 //
-// АГЕНТ БЕЗ ЕДИНОГО ЛИДА — НЕ ПРОСРОЧКА, А ОТДЕЛЬНАЯ СТРОКА. Его не
-// возвращают, его впервые активируют, и разговор с ним другой. Таких в
-// сети примерно половина, и сложи мы их с остальными, плитка «более 90»
-// стала бы списком, с которым невозможно работать.
+// АГЕНТ БЕЗ ЕДИНОГО ЛИДА НЕ ПОПАДАЕТ НИ В ОДНУ ГРУППУ ПРОСРОЧКИ. Его не
+// возвращают, его впервые активируют, и разговор с ним другой.
 // ============================================================================
 
 function Bucket({ label, list, tone, note, open, onToggle }) {
@@ -33,26 +34,41 @@ function Bucket({ label, list, tone, note, open, onToggle }) {
   )
 }
 
-function Список({ list, показыватьДни = true }) {
+function Список({ list, дни = true }) {
+  const { sort, onSort, apply } = useSort(дни ? 'дней_без_лида' : 'агент', дни ? 'desc' : 'asc')
+  const rows = apply(list)
   return (
-    <div className="rop-stuck" style={{ marginBottom: 14 }}>
-      {list.slice(0, 200).map(a => (
-        <div key={a.agent_id} className="rop-stuck-row">
-          {показыватьДни && (
-            <span className="rop-stuck-days">{formatNum(a.дней_без_лида)} дн.</span>
-          )}
-          <span className="rop-stuck-title">{a.агент}</span>
-          <span className="rop-stuck-stage">{a.стадия || '—'}</span>
-          <span className="rop-stuck-sum">
-            {a.лидов_всего ? `${formatNum(a.лидов_всего)} ${plural(a.лидов_всего, 'лид', 'лида', 'лидов')}` : 'ни одного'}
-          </span>
-        </div>
-      ))}
-      {list.length > 200 && (
-        <div className="portal-muted" style={{ marginTop: 6 }}>
-          показаны первые двести из {formatNum(list.length)}
-        </div>
-      )}
+    <div className="table-wrap">
+      <div className="table-scroll">
+        <table className="table-compact rop-table">
+          <thead>
+            <tr>
+              <Th sort={sort} onSort={onSort} k="агент" textual>Агент</Th>
+              <Th sort={sort} onSort={onSort} k="стадия" textual>Стадия</Th>
+              {дни && (
+                <Th sort={sort} onSort={onSort} k="дней_без_лида" className="portal-num">
+                  Дней без лида
+                </Th>
+              )}
+              <Th sort={sort} onSort={onSort} k="лидов_всего" className="portal-num">
+                Лидов всего
+              </Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(a => (
+              <tr key={a.agent_id}>
+                <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{a.агент}</td>
+                <td>{a.стадия || <span className="td-muted">—</span>}</td>
+                {дни && <td className="portal-num">{formatNum(a.дней_без_лида)}</td>}
+                <td className="portal-num">
+                  {a.лидов_всего ? formatNum(a.лидов_всего) : <span className="td-muted">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -63,10 +79,10 @@ export default function AgentsOverduePage({ data }) {
   const toggle = (id) => setOpen(open === id ? null : id)
 
   const карточки = [
-    { id: 'd30', label: 'Молчат более 30 дней', list: b.d30, tone: '',
-      note: 'включая тех, кто молчит дольше' },
-    { id: 'd60', label: 'Более 60 дней', list: b.d60, tone: 'warn',
-      note: 'включая тех, кто молчит дольше' },
+    { id: 'd30', label: 'Молчат 30–60 дней', list: b.d30, tone: '',
+      note: 'ещё можно вернуть' },
+    { id: 'd60', label: '60–90 дней', list: b.d60, tone: 'warn',
+      note: 'уходят' },
     { id: 'd90', label: 'Более 90 дней', list: b.d90, tone: 'bad',
       note: 'практически потеряны' },
     { id: 'никогда', label: 'Ни одного лида', list: b.никогда, tone: '',
@@ -79,8 +95,8 @@ export default function AgentsOverduePage({ data }) {
         <h2 className="portal-section-title">Просрочки</h2>
         <p className="portal-section-note">
           Считается по дате последнего лида, снимок на сегодня — период
-          наверху на эту вкладку не влияет. Щёлкните по плитке, чтобы
-          увидеть поимённо.
+          наверху на эту вкладку не влияет. Группы не пересекаются: каждый
+          агент ровно в одной. Щёлкните по плитке, чтобы увидеть поимённо.
         </p>
       </div>
 
@@ -95,17 +111,17 @@ export default function AgentsOverduePage({ data }) {
           <div className="portal-section-head">
             <h2 className="portal-section-title">{c.label}</h2>
           </div>
-          <Список list={c.list} показыватьДни={c.id !== 'никогда'} />
+          <Список list={c.list} дни={c.id !== 'никогда'} />
         </div>
       ))}
 
       <div className="rop-footer">
-        Пороги накопительные: тот, кто молчит сто дней, посчитан во всех
-        трёх плитках. Так цифра в плитке совпадает с длиной списка под ней.
         Агенты без единого лида вынесены отдельно: это не просрочка, а люди,
-        которых ни разу не активировали, — таких в сети около половины, и в
-        общем списке они утопили бы тех, кого ещё можно вернуть. Всего
-        карточек агентов: {formatNum(b.всего)}.
+        которых ни разу не активировали, — в общем списке они утопили бы тех,
+        кого ещё можно вернуть. Передавали за последние тридцать дней{' '}
+        {formatNum(b.активны)}{' '}
+        {plural(b.активны, 'агент', 'агента', 'агентов')} — они здесь не
+        показаны. Всего карточек агентов: {formatNum(b.всего)}.
       </div>
     </>
   )

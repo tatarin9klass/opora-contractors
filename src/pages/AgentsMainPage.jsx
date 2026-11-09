@@ -1,5 +1,6 @@
 import React from 'react'
 import { flowByStage, totals, byPrefix, aov, pct } from '../lib/agents.js'
+import { useSort, Th } from '../lib/sortable.jsx'
 import { formatNum } from '../lib/helpers.js'
 import { formatMoneyShort } from '../lib/rop.js'
 
@@ -35,11 +36,12 @@ function Stage({ s, flow }) {
 }
 
 export default function AgentsMainPage({ data, label }) {
+  const { sort, onSort, apply } = useSort('лиды')
   const funnel = data?.funnel || []
   const flow = flowByStage(data?.flow || [])
   const daily = data?.daily || []
   const t = totals(daily)
-  const prefixes = byPrefix(daily)
+  const prefixes = apply(byPrefix(daily))
   const всегоАгентов = funnel.reduce((a, s) => a + Number(s.агентов || 0), 0)
 
   return (
@@ -114,11 +116,6 @@ export default function AgentsMainPage({ data, label }) {
 
       <div className="portal-section-head">
         <h2 className="portal-section-title">По префиксам источника</h2>
-        <p className="portal-section-note">
-          Агентский канал — это <b>agbfl</b>. Всё, что пришло через агента
-          другим префиксом, передано не своим путём: выплата по такому лиду
-          не начислится, а агент об этом обычно не знает.
-        </p>
       </div>
 
       {prefixes.length === 0 ? (
@@ -133,12 +130,12 @@ export default function AgentsMainPage({ data, label }) {
             <table className="table-compact rop-table">
               <thead>
                 <tr>
-                  <th style={{ minWidth: 120 }}>Префикс</th>
-                  <th className="portal-num">Лиды</th>
-                  <th className="portal-num">Квалы</th>
-                  <th className="portal-num">Встречи</th>
-                  <th className="portal-num">Сделки</th>
-                  <th className="portal-num">Revenue</th>
+                  <Th sort={sort} onSort={onSort} k="префикс" textual>Префикс</Th>
+                  <Th sort={sort} onSort={onSort} k="лиды" className="portal-num">Лиды</Th>
+                  <Th sort={sort} onSort={onSort} k="квалы" className="portal-num">Квалы</Th>
+                  <Th sort={sort} onSort={onSort} k="встречи" className="portal-num">Встречи</Th>
+                  <Th sort={sort} onSort={onSort} k="сделки" className="portal-num">Сделки</Th>
+                  <Th sort={sort} onSort={onSort} k="выручка" className="portal-num">Revenue</Th>
                 </tr>
               </thead>
               <tbody>
@@ -166,6 +163,14 @@ export default function AgentsMainPage({ data, label }) {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {prefixes.length > 0 && (
+        <div className="rop-footer">
+          Агентский канал — <b>agbfl</b>. Остальное помечено «не свой канал»:
+          лид засчитан, но выплата по нему не начислится, а агент об этом
+          обычно не знает.
         </div>
       )}
     </>
