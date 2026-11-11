@@ -668,6 +668,12 @@ tbody td { padding: 11px 14px; font-size: 13px; color: var(--text); vertical-ali
    ему один отдел. */
 .rop-team { margin-left: auto; align-self: center; margin-bottom: 6px; max-width: 220px; }
 
+/* Кнопки загрузки сделок. В кабинете РОПа стоят компактно над вкладками,
+   в разделе импорта — обычным блоком. */
+.rop-import { margin-bottom: 16px; }
+.rop-import.compact { margin: -4px 0 16px; }
+.rop-import-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
 /* Свежесть данных. Стоит в ряду вкладок справа и молчит, пока всё
    нормально: цвет появляется только когда данные начали стареть. */
 .freshness {

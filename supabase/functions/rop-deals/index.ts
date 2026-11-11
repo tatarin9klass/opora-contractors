@@ -88,6 +88,19 @@ async function bitrix(method: string, params: Record<string, unknown>, attempt =
   }
 }
 
+// Дата для фильтра Битрикса: явное московское смещение и запас назад.
+//
+// СМЕЩЕНИЕ ЯВНОЕ, потому что суффикс «Z» Битрикс понимает не всегда, а
+// остальные фильтры в этом файле уже написаны с «+03:00».
+//
+// ЗАПАС В ПЯТНАДЦАТЬ МИНУТ — на расхождение часов между Supabase и
+// Битриксом и на сделки, изменённые пока шёл проход. Лишние пятнадцать
+// минут изменений перечитать дёшево, потерять сделку — дорого.
+function bitrixSince(iso: string): string {
+  const d = new Date(new Date(iso).getTime() - 15 * 60 * 1000 + 3 * 3600 * 1000);
+  return d.toISOString().slice(0, 19) + "+03:00";
+}
+
 function toIso(raw: unknown): string | null {
   if (!raw) return null;
   const d = new Date(String(raw));
@@ -275,16 +288,35 @@ Deno.serve(async (req) => {
     let productsDone = body.reset ? 0 : Number(state.products_done || 0);
     let stagesDone = body.reset ? 0 : Number(state.stages_done || 0);
 
-    // Новый цикл начинается с начала: стадия, сумма и состав услуг меняются
-    // всю жизнь сделки, поэтому догружать только новые нельзя — иначе
-    // воронка навсегда застынет в том виде, в каком сделку увидели впервые.
-    if (phase === "" || phase === "idle" || body.reset) {
+    // ПОЛНЫЙ ПРОХОД ПРОТИВ ДОГРУЗКИ ИЗМЕНИВШИХСЯ.
+    //
+    // Раньше проход был только один — полный, и это не выдерживало роста.
+    // Фазы товаров и истории делают по запросу в Битрикс НА КАЖДУЮ сделку в
+    // таблице, а таблица только растёт. На тысяче сделок это две тысячи
+    // запросов и десяток проходов по минуте; на четырёх тысячах — восемь
+    // тысяч запросов и за сорок проходов. Кнопка столько не ходит: она
+    // упиралась бы в предел и молча останавливалась на половине.
+    //
+    // Поэтому обычный запуск берёт только сделки, изменившиеся с прошлого
+    // раза, и перечитывает товары с историей лишь у них. Стоимость такого
+    // прохода зависит от числа изменений за день, а не от размера архива.
+    //
+    // Полный проход остаётся и нужен: правку товарной позиции Битрикс не
+    // всегда отражает в дате изменения сделки. Его запускают кнопкой
+    // «перезагрузить всё» — скажем, раз в месяц.
+    const полный = body.full === true || body.reset === true || !state.last_sync_at;
+    const начало = phase === "" || phase === "idle" || body.reset || body.full;
+    const runAt = начало ? new Date().toISOString() : (state.run_at || new Date().toISOString());
+    const since = полный ? null : state.last_sync_at;
+
+    if (начало) {
       phase = "deals";
       dealsStart = 0;
       productsDone = 0;
       stagesDone = 0;
       await writeState(supabase, {
         phase, deals_start: "0", products_done: "0", stages_done: "0",
+        run_at: runAt, run_mode: полный ? "full" : "since",
       });
     }
 
@@ -309,9 +341,15 @@ Deno.serve(async (req) => {
     // сделок, которые больше не изменятся.
     while ((phase === "deals" || phase === "deals_open") && timeLeft() > 12_000) {
       const json = await bitrix("crm.deal.list", {
+        // В догрузке оба прохода сужаются датой изменения: всё, что не
+        // трогали, в таблице уже лежит и перечитывать его незачем.
         filter: phase === "deals"
-          ? { CATEGORY_ID, ">=DATE_CREATE": `${DEALS_FROM}T00:00:00+03:00` }
-          : { CATEGORY_ID, CLOSED: "N" },
+          ? (since
+              ? { CATEGORY_ID, ">DATE_MODIFY": bitrixSince(since) }
+              : { CATEGORY_ID, ">=DATE_CREATE": `${DEALS_FROM}T00:00:00+03:00` })
+          : (since
+              ? { CATEGORY_ID, CLOSED: "N", ">DATE_MODIFY": bitrixSince(since) }
+              : { CATEGORY_ID, CLOSED: "N" }),
         select: [
           "ID", "TITLE", "CATEGORY_ID", "STAGE_ID", "OPPORTUNITY", "CLOSED",
           "ASSIGNED_BY_ID", "LEAD_ID", "SOURCE_ID",
@@ -393,8 +431,12 @@ Deno.serve(async (req) => {
     // --- фаза 2: товарные позиции ------------------------------------------
     // Запрос на сделку, поэтому идём порциями и помним, сколько прошли.
     while (phase === "products" && timeLeft() > 12_000) {
+      // ТОЛЬКО ЗАТРОНУТЫЕ В ЭТОМ ЦИКЛЕ. Раньше здесь шёл обход всей
+      // таблицы, и стоимость прохода росла вместе с архивом, хотя
+      // перечитывать не менявшиеся сделки незачем.
       const { data: batch } = await supabase
         .from("rop_deals").select("deal_id")
+        .gte("synced_at", runAt)
         .order("deal_id", { ascending: true })
         .range(productsDone, productsDone + 24);
 
@@ -440,13 +482,17 @@ Deno.serve(async (req) => {
     while (phase === "stages" && timeLeft() > 12_000) {
       const { data: batch } = await supabase
         .from("rop_deals").select("deal_id")
+        .gte("synced_at", runAt)
         .order("deal_id", { ascending: true })
         .range(stagesDone, stagesDone + 24);
 
       if (!batch || batch.length === 0) {
         phase = "idle";
         done = true;
-        await writeState(supabase, { phase });
+        // Следующая догрузка возьмёт изменения с момента НАЧАЛА этого
+        // цикла, а не конца: сделка, изменённая пока проход шёл, иначе
+        // потерялась бы навсегда.
+        await writeState(supabase, { phase, last_sync_at: runAt });
         break;
       }
 
@@ -488,6 +534,7 @@ Deno.serve(async (req) => {
       success: true,
       done,
       phase,
+      mode: полный ? "full" : "since",
       deals_upserted: dealsUpserted,
       products_upserted: productsUpserted,
       stages_upserted: stagesUpserted,

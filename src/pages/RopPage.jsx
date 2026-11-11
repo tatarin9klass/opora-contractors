@@ -5,6 +5,7 @@ import RopDashboardPage from './RopDashboardPage.jsx'
 import RopManagersPage from './RopManagersPage.jsx'
 import RopPlansPage from './RopPlansPage.jsx'
 import Freshness from '../components/Freshness.jsx'
+import RopImportButton from '../components/RopImportButton.jsx'
 
 // ============================================================================
 // Кабинет руководителя отдела продаж.
@@ -82,6 +83,13 @@ export default function RopPage({ standalone = false }) {
         )}
         <Freshness набор="Сделки отдела продаж" />
       </div>
+      {/* ЗАГРУЗКА ДАННЫХ ДОСТУПНА САМОМУ РУКОВОДИТЕЛЮ. Раньше кнопка жила
+          только в админском разделе «Импорт данных», и РОП, увидев
+          вчерашние цифры, не мог ничего сделать — только написать нам.
+          Теперь обновление в одном экране с теми цифрами, которые оно
+          чинит. */}
+      {!noTeam && <RopImportButton compact />}
+
       {noTeam && (
         <div className="empty-state" style={{ marginTop: 24 }}>
           <div className="empty-state-icon">🔧</div>
