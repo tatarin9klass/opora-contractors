@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { todayISO } from '../lib/dateContext.js'
 import {
   loadRopData, periodBounds, recentMonths, sumRows, planFor, runRate, planStatus,
-  paceTarget, formatMoneyShort, GROUPS, byTeam, prevBounds, dailySeries, quotaPerDay,
+  paceTarget, formatMoneyShort, GROUPS, byTeam, dailySeries, quotaPerDay,
 } from '../lib/rop.js'
 import { formatNum, plural } from '../lib/helpers.js'
 
@@ -30,7 +30,7 @@ const MODES = [
   { id: 'range', label: 'Период' },
 ]
 
-function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub, was, big, children }) {
+function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub, big, children }) {
   // Цвет ставится по темпу, а не по месячному плану целиком: иначе середина
   // месяца всегда красная. Сам план в подписи остаётся месячным — подменять
   // его нельзя, человек должен видеть ту цифру, на которую подписался.
@@ -52,21 +52,6 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
           )}
           {partial && (
             <span className="rop-metric-pct"> · к этому дню {formatNum(Math.round(target))}</span>
-          )}
-        </div>
-      )}
-      {/* «Было» рядом с цифрой отвечает на вопрос, который иначе остаётся
-          без ответа: двадцать четыре договора — это много или мало. Без
-          прошлого периода любая метрика читается как нейтральная. */}
-      {was != null && fact != null && (
-        <div className="rop-metric-was">
-          было {formatNum(was)}
-          {was > 0 && (
-            <span className={`rop-delta ${
-              (fact > was) === !inverse ? 'up' : fact === was ? '' : 'down'}`}>
-              {fact === was ? ' ·' : fact > was ? ' ↑' : ' ↓'}
-              {fact === was ? ' столько же' : ` ${Math.abs(Math.round((100 * (fact - was)) / was))}%`}
-            </span>
           )}
         </div>
       )}
@@ -234,7 +219,6 @@ export default function RopDashboardPage({ team = null }) {
   const [from, setFrom] = useState(todayISO())
   const [to, setTo] = useState(todayISO())
   const [data, setData] = useState(null)
-  const [prev, setPrev] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -253,12 +237,6 @@ export default function RopDashboardPage({ team = null }) {
       .catch(e => { if (!cancelled) setError(String(e?.message || e)) })
       .finally(() => { if (!cancelled) setLoading(false) })
 
-    // Прошлый сопоставимый период грузится отдельно и молча: если он не
-    // придёт, экран просто останется без сравнения, а не сломается.
-    const pb = prevBounds(mode, bounds.from, bounds.to)
-    loadRopData(pb.from, pb.to)
-      .then(d => { if (!cancelled) setPrev(d) })
-      .catch(() => { if (!cancelled) setPrev(null) })
     return () => { cancelled = true }
   }, [bounds.from, bounds.to, mode])
 
@@ -267,10 +245,6 @@ export default function RopDashboardPage({ team = null }) {
   const total = useMemo(() => sumRows(rows), [rows])
   const план = planFor(plans, bounds.from, 'оксвсего', null, team)
 
-  const было = useMemo(
-    () => (prev ? sumRows(byTeam(prev.daily || [], team)) : null),
-    [prev, team],
-  )
   // «Период закрыт» определяется датой, а не сравнением темпа с фактом.
   // При нуле договоров темп тоже ноль, они совпадали, и открытый ноябрь
   // подписывался закрытым.
@@ -326,8 +300,7 @@ export default function RopDashboardPage({ team = null }) {
             у неё тоже есть. АЗ и ВКИ продаются поверх договора, поэтому
             сделка может попасть и в БФЛ, и в АЗ — три плитки намеренно не
             складываются в одну сумму. */}
-        <Metric label="БФЛ" fact={total.окс_бфл} plan={план} unit="шт" bounds={bounds}
-                was={было?.окс_бфл} big>
+        <Metric label="БФЛ" fact={total.окс_бфл} plan={план} unit="шт" bounds={bounds} big>
           <Split rows={rows} pick={t => t.окс_бфл} />
         </Metric>
         {/* Внесудебное банкротство стоит сразу за судебным, а не в конце
@@ -335,19 +308,19 @@ export default function RopDashboardPage({ team = null }) {
             Отдельный продукт — другой процесс, другая цена, и депозита
             арбитражного управляющего у него нет. Раньше оно попадало в БФЛ
             по слову «банкротство» в названии и подмешивалось к судебному. */}
-        <Metric label="ВБФЛ" fact={total.окс_вбфл} unit="шт" bounds={bounds} was={было?.окс_вбфл}>
+        <Metric label="ВБФЛ" fact={total.окс_вбфл} unit="шт" bounds={bounds}>
           <Split rows={rows} pick={t => t.окс_вбфл} />
         </Metric>
-        <Metric label="АЗ" fact={total.окс_аз} unit="шт" bounds={bounds} was={было?.окс_аз}>
+        <Metric label="АЗ" fact={total.окс_аз} unit="шт" bounds={bounds}>
           <Split rows={rows} pick={t => t.окс_аз} />
         </Metric>
-        <Metric label="ВКИ" fact={total.окс_вки} unit="шт" bounds={bounds} was={было?.окс_вки}>
+        <Metric label="ВКИ" fact={total.окс_вки} unit="шт" bounds={bounds}>
           <Split rows={rows} pick={t => t.окс_вки} />
         </Metric>
         {/* ФПА продаётся до банкротства и в чек намеренно не входит — это
             проверка, подходит ли клиент. Здесь он идёт штуками: сколько
             проверок продали, то есть каков вход в воронку. */}
-        <Metric label="ФПА" fact={total.окс_фпа} unit="шт" bounds={bounds} was={было?.окс_фпа}>
+        <Metric label="ФПА" fact={total.окс_фпа} unit="шт" bounds={bounds}>
           <Split rows={rows} pick={t => t.окс_фпа} />
         </Metric>
       </div>
