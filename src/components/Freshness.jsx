@@ -31,15 +31,20 @@ export default function Freshness({ набор }) {
   useEffect(() => {
     let cancelled = false
     supabase.from('portal_freshness').select('набор, обновлено').eq('набор', набор)
-      .then(({ data }) => {
-        if (!cancelled) setОбновлено(data && data.length ? data[0].обновлено : null)
+      .then(({ data, error }) => {
+        if (cancelled) return
+        // ОШИБКА ЗАПРОСА — НЕ ПОВОД КРИЧАТЬ О ПУСТЫХ ДАННЫХ. Витрины может
+        // ещё не быть (миграцию не прогнали), и тогда «данные ни разу не
+        // загружались» — прямая неправда: цифры на экране есть. Молчим.
+        if (error) { setОбновлено(false); return }
+        setОбновлено(data && data.length ? data[0].обновлено : null)
       })
     return () => { cancelled = true }
   }, [набор])
 
   // Пока не ответило — молчим. Мигать «данных нет» на полсекунды при каждом
   // открытии вкладки хуже, чем не показать ничего.
-  if (обновлено === undefined) return null
+  if (обновлено === undefined || обновлено === false) return null
   if (!обновлено) return <span className="freshness bad">данные ни разу не загружались</span>
 
   const часов = (Date.now() - new Date(обновлено).getTime()) / 3600000
