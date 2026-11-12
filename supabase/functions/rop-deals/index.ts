@@ -487,12 +487,15 @@ Deno.serve(async (req) => {
         .range(stagesDone, stagesDone + 24);
 
       if (!batch || batch.length === 0) {
-        phase = "idle";
-        done = true;
-        // Следующая догрузка возьмёт изменения с момента НАЧАЛА этого
-        // цикла, а не конца: сделка, изменённая пока проход шёл, иначе
-        // потерялась бы навсегда.
-        await writeState(supabase, { phase, last_sync_at: runAt });
+        // Полный проход заканчивается сверкой, догрузка — сразу готово:
+        // по изменившимся сделкам сверять нечего, они только что приехали.
+        phase = полный ? "verify" : "idle";
+        done = !полный;
+        await writeState(supabase, {
+          phase,
+          ...(done ? { last_sync_at: runAt } : {}),
+          verify_done: "0",
+        });
         break;
       }
 
@@ -530,11 +533,69 @@ Deno.serve(async (req) => {
       if (ids.length < batch.length) break;
     }
 
+    // --- фаза 4: сверка с Битриксом ----------------------------------------
+    //
+    // ПОЧЕМУ БЕЗ НЕЁ ЧИСЛА РАСТУТ. Сделку, удалённую в Битриксе или
+    // перенесённую в другую воронку, обычный проход не увидит: фильтр ищет
+    // воронку 34, а она там больше не числится. Наша копия остаётся
+    // навсегда, с прежней датой оплаты, и продолжает считаться договором.
+    // Со временем кабинет показывает больше сделок, чем есть.
+    //
+    // СВЕРКА СПРАШИВАЕТ ПО ИДЕНТИФИКАТОРАМ, А НЕ ПО ВОРОНКЕ: пачками по
+    // пятьдесят, без фильтра по категории. Кого Битрикс не вернул — того
+    // там нет; у кого воронка изменилась — тот больше не наш. На тысячу
+    // сделок это двадцать запросов, то есть почти бесплатно.
+    //
+    // Только в полном проходе. В догрузке мы и так видим лишь то, что
+    // Битрикс отдал, и делать выводы об отсутствующих не из чего.
+    let verifyDone = Number(state.verify_done || 0);
+    let удалено = 0;
+    while (phase === "verify" && timeLeft() > 10_000) {
+      const { data: batch } = await supabase
+        .from("rop_deals").select("deal_id")
+        .order("deal_id", { ascending: true })
+        .range(verifyDone, verifyDone + 49);
+
+      if (!batch || batch.length === 0) {
+        phase = "idle";
+        done = true;
+        await writeState(supabase, { phase, last_sync_at: runAt, verify_done: "0" });
+        break;
+      }
+
+      const ids = batch.map((b: any) => Number(b.deal_id));
+      const json = await bitrix("crm.deal.list", {
+        filter: { ID: ids },
+        select: ["ID", "CATEGORY_ID"],
+        start: 0,
+      });
+      const живые = new Set(
+        (json.result || [])
+          .filter((d: any) => Number(d.CATEGORY_ID) === CATEGORY_ID)
+          .map((d: any) => Number(d.ID)),
+      );
+      const лишние = ids.filter((id) => !живые.has(id));
+      if (лишние.length) {
+        // Позиции и история уходят вместе со сделкой: иначе останутся
+        // строки-сироты, а витрина событий считает именно по ним.
+        await supabase.from("rop_deal_products").delete().in("deal_id", лишние);
+        await supabase.from("rop_deal_stages").delete().in("deal_id", лишние);
+        await supabase.from("rop_deals").delete().in("deal_id", лишние);
+        удалено += лишние.length;
+      }
+
+      // Смещение двигаем на число ОСТАВШИХСЯ: удалённые строки исчезли из
+      // выборки, и прибавь мы всю пачку — пропустили бы столько же живых.
+      verifyDone += ids.length - лишние.length;
+      await writeState(supabase, { verify_done: String(verifyDone) });
+    }
+
     return new Response(JSON.stringify({
       success: true,
       done,
       phase,
       mode: полный ? "full" : "since",
+      removed: удалено,
       deals_upserted: dealsUpserted,
       products_upserted: productsUpserted,
       stages_upserted: stagesUpserted,
