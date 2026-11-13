@@ -32,7 +32,7 @@ export default function RopImportButton({ compact = false, onDone }) {
       // Счётчики в ответе — за один проход: функция о предыдущих вызовах
       // не знает. Складываем здесь, иначе на экране будет последний кусок
       // вместо итога.
-      const totals = { deals: 0, products: 0, stages: 0, removed: 0 }
+      const totals = { deals: 0, products: 0, stages: 0, removed: 0, moved: 0 }
       let завершено = false
       for (let pass = 1; pass <= MAX_PASSES; pass++) {
         const res = await fetch(FUNCTION_URL, {
@@ -53,6 +53,7 @@ export default function RopImportButton({ compact = false, onDone }) {
         totals.products += Number(json.products_upserted || 0)
         totals.stages += Number(json.stages_upserted || 0)
         totals.removed += Number(json.removed || 0)
+        totals.moved += Number(json.moved || 0)
         setResult({ ...json, pass, totals: { ...totals } })
         if (json.done) { завершено = true; break }
         body = {}
@@ -104,6 +105,9 @@ export default function RopImportButton({ compact = false, onDone }) {
           {result.mode === 'full' ? ' · полный проход' : ''}.
           {' '}Сделок {result.totals?.deals ?? 0}, позиций {result.totals?.products ?? 0},
           {' '}записей истории {result.totals?.stages ?? 0}.
+          {result.totals?.moved
+            ? ` Уехало в другие воронки: ${result.totals.moved}.`
+            : ''}
           {result.totals?.removed
             ? ` Удалено исчезнувших из Битрикса: ${result.totals.removed}.`
             : ''}
