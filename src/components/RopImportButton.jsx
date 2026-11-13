@@ -46,6 +46,9 @@ export default function RopImportButton({ compact = false, onDone }) {
         })
         const json = await res.json()
         if (!json.success) { setError(json.error || 'Неизвестная ошибка'); break }
+        // Другой проход уже идёт: не ошибка, но продолжать нельзя —
+        // одновременная запись портит товарные позиции.
+        if (json.busy) { setError(json.error_hint || 'Загрузка уже идёт'); break }
         totals.deals += Number(json.deals_upserted || 0)
         totals.products += Number(json.products_upserted || 0)
         totals.stages += Number(json.stages_upserted || 0)

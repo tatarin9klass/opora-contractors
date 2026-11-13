@@ -256,6 +256,48 @@ async function writeState(supabase: any, patch: Record<string, string>) {
   if (rows.length) await supabase.from("rop_sync_state").upsert(rows, { onConflict: "key" });
 }
 
+// ============================================================================
+// Аренда на проход: два импорта одновременно не идут.
+//
+// ЗАЧЕМ. Товарные позиции и история пишутся как «удалить по сделке, потом
+// вставить». Два прохода, запущенные одновременно — из двух вкладок или
+// двойным кликом, — успевают удалить оба, а затем оба вставляют, и
+// выходит двойной комплект позиций.
+//
+// Следов такой порчи в данных не нашлось: все совпадающие строки
+// оказались семейными банкротствами, где две одинаковые позиции —
+// правда, а не дубль (депозит АУ нужен на каждого из двоих). Так что это
+// не починка, а страховка: возможность испортить данные двумя кликами
+// существует, и закрыть её дешевле, чем потом разбирать последствия.
+//
+// Аренда берётся ОДНИМ запросом с условием: UPDATE проходит только если
+// строка старше трёх минут. Проверить, а потом записать — не годится: два
+// вызова успеют проверить до того, как любой запишет.
+//
+// Три минуты — дольше бюджета одного прохода (полторы). Упавший проход
+// держит аренду максимум это время, потом она освобождается сама.
+const LOCK_MS = 3 * 60 * 1000;
+
+async function takeLock(supabase: any): Promise<boolean> {
+  // Строка должна существовать, иначе UPDATE не на что действовать.
+  await supabase.from("rop_sync_state").upsert(
+    { key: "lock", value: "0", updated_at: new Date(0).toISOString() },
+    { onConflict: "key", ignoreDuplicates: true },
+  );
+  const { data } = await supabase.from("rop_sync_state")
+    .update({ value: "1", updated_at: new Date().toISOString() })
+    .eq("key", "lock")
+    .lt("updated_at", new Date(Date.now() - LOCK_MS).toISOString())
+    .select("key");
+  return Array.isArray(data) && data.length > 0;
+}
+
+async function releaseLock(supabase: any) {
+  await supabase.from("rop_sync_state")
+    .update({ value: "0", updated_at: new Date(0).toISOString() })
+    .eq("key", "lock");
+}
+
 async function upsertChunked(supabase: any, table: string, rows: any[], onConflict: string) {
   for (let i = 0; i < rows.length; i += 500) {
     const { error } = await supabase.from(table).upsert(rows.slice(i, i + 500), { onConflict });
@@ -281,6 +323,16 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    if (!(await takeLock(supabase))) {
+      // Не ошибка: просто этот проход сейчас не нужен. Кнопка покажет
+      // сообщение и остановится, вместо того чтобы портить данные.
+      return new Response(JSON.stringify({
+        success: true, done: false, busy: true,
+        error_hint: "Загрузка уже идёт — похоже, запущена в другом окне.",
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     const state = await readState(supabase);
 
     let phase = body.reset ? "deals" : (state.phase || "deals");
@@ -611,5 +663,14 @@ Deno.serve(async (req) => {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  } finally {
+    // Аренда снимается всегда: иначе упавший проход запер бы импорт на три
+    // минуты, а кнопка ходит по кругу и упёрлась бы в «уже идёт».
+    try {
+      await createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+        .from("rop_sync_state")
+        .update({ value: "0", updated_at: new Date(0).toISOString() })
+        .eq("key", "lock");
+    } catch { /* освобождение не должно ломать ответ */ }
   }
 });
