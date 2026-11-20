@@ -724,7 +724,26 @@ th.th-sortable.active .th-arrow { opacity: 1; }
   gap: 10px; margin-bottom: 12px; align-items: start;
 }
 .rop-metrics > div { height: 100%; }
-.rop-metrics.rop-money-summary { grid-template-columns: minmax(0, 1fr); margin-bottom: 18px; }
+/* Одна сетка связывает границы продуктов, темпа, квоты и суммы. */
+.rop-kpi-section { container-type: inline-size; margin-bottom: 12px; }
+.rop-kpi-grid {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px; align-items: stretch;
+}
+.rop-kpi-grid > .rop-metric { min-width: 0; display: flex; flex-direction: column; }
+.rop-kpi-grid .rop-metric-money { grid-column: span 3; }
+.rop-kpi-grid .rop-metric-value { overflow-wrap: anywhere; }
+.rop-kpi-grid .rop-split { margin-top: auto; padding-top: 12px; }
+@container (max-width: 899px) {
+  .rop-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rop-kpi-grid .rop-metric-fpa,
+  .rop-kpi-grid .rop-metric-money { grid-column: span 2; }
+}
+@container (max-width: 319px) {
+  .rop-kpi-grid { grid-template-columns: minmax(0, 1fr); }
+  .rop-kpi-grid .rop-metric-fpa,
+  .rop-kpi-grid .rop-metric-money { grid-column: auto; }
+}
 /* Вторая строка — темп и квота. Это не факты, а выводы из фактов, поэтому
    плитки не растягиваются на всю ширину: растянутая плитка читается как
    более важная, а она менее важна, чем проданные продукты над ней. */
