@@ -1,4 +1,5 @@
 import { supabase, fetchAllRows } from './supabase.js'
+import { MONEY_METRIC } from './ropMoney.js'
 import { todayISO, addDaysISO, weekStartOf } from './dateContext.js'
 
 // ============================================================================
@@ -25,22 +26,14 @@ export const GROUPS = [
   { id: 'прочее', label: 'Прочее' },
 ]
 
-// Метрики, у которых есть план. Брак — единственная с обратным знаком:
-// у неё зелёная зона снизу, и путать её с остальными нельзя.
+// Планы по количеству БФЛ и полной сумме всех договоров.
 export const PLAN_METRICS = [
-  // План ставится по одному показателю — заключённым договорам БФЛ. Так
-  // решил руководитель направления, и причина понятная: план, разложенный
-  // на шесть метрик, перестаёт быть обязательством и становится анкетой.
-  // АЗ и ВКИ продаются поверх договора и плана не имеют.
-  //
-  // Ключ метрики остался прежним («оксвсего»): по нему уже заведены планы,
-  // и переименование ради красоты обнулило бы их. Изменилось то, что
-  // считает факт под этим планом, — теперь это договоры БФЛ.
   { id: 'оксвсего', label: 'Договоры БФЛ', unit: 'шт' },
+  { id: MONEY_METRIC, label: 'Сумма договоров, ₽', unit: '₽' },
 ]
 
 export async function loadRopData(fromISO, toISO) {
-  const [daily, byManager, plans, stageSince, managers, teams] = await Promise.all([
+  const [daily, byManager, plans, stageSince, managers, teams, contractAmounts] = await Promise.all([
     fetchAllRows(() => supabase.from('rop_portal_daily').select('*')
       .gte('дата', fromISO).lte('дата', toISO)),
     fetchAllRows(() => supabase.from('rop_portal_manager').select('*')
@@ -49,8 +42,10 @@ export async function loadRopData(fromISO, toISO) {
     fetchAllRows(() => supabase.from('rop_portal_stage_since').select('*')),
     fetchAllRows(() => supabase.from('rop_portal_managers').select('*')),
     fetchAllRows(() => supabase.from('rop_portal_teams').select('*').order('sort_order')),
+    fetchAllRows(() => supabase.from('rop_portal_contract_amounts').select('*')
+      .gte('дата', fromISO).lte('дата', toISO)),
   ])
-  return { daily, byManager, plans, stageSince, managers, teams }
+  return { daily, byManager, plans, stageSince, managers, teams, contractAmounts }
 }
 
 // Отбор по отделу. База и так отдаёт руководителю только его строки, но

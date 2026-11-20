@@ -724,6 +724,7 @@ th.th-sortable.active .th-arrow { opacity: 1; }
   gap: 10px; margin-bottom: 12px; align-items: start;
 }
 .rop-metrics > div { height: 100%; }
+.rop-metrics.rop-money-summary { grid-template-columns: minmax(0, 1fr); margin-bottom: 18px; }
 /* Вторая строка — темп и квота. Это не факты, а выводы из фактов, поэтому
    плитки не растягиваются на всю ширину: растянутая плитка читается как
    более важная, а она менее важна, чем проданные продукты над ней. */

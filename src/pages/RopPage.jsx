@@ -41,6 +41,7 @@ const TABS = [
 export default function RopPage({ standalone = false }) {
   const { session, signOut } = useAuth()
   const [tab, setTab] = useState('dash')
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // Отделов продаж два, и у каждого свой руководитель. База отдаёт роли rop
   // только её собственный, поэтому список из одной строки означает «выбирать
@@ -88,7 +89,7 @@ export default function RopPage({ standalone = false }) {
           вчерашние цифры, не мог ничего сделать — только написать нам.
           Теперь обновление в одном экране с теми цифрами, которые оно
           чинит. */}
-      {!noTeam && <RopImportButton compact />}
+      {!noTeam && <RopImportButton compact onDone={() => setRefreshKey(k => k + 1)} />}
 
       {noTeam && (
         <div className="empty-state" style={{ marginTop: 24 }}>
@@ -102,8 +103,8 @@ export default function RopPage({ standalone = false }) {
           </p>
         </div>
       )}
-      {!noTeam && tab === 'dash' && <RopDashboardPage team={team} />}
-      {!noTeam && tab === 'managers' && <RopManagersPage team={team} />}
+      {!noTeam && tab === 'dash' && <RopDashboardPage team={team} refreshKey={refreshKey} />}
+      {!noTeam && tab === 'managers' && <RopManagersPage team={team} refreshKey={refreshKey} />}
       {!noTeam && tab === 'plans' && <RopPlansPage team={team} />}
     </>
   )
