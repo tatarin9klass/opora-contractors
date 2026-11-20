@@ -31,7 +31,7 @@ const MODES = [
   { id: 'range', label: 'Период' },
 ]
 
-function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub, big, children, moneyFormat = formatMoneyShort }) {
+function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub, big, children, moneyFormat = formatMoneyShort, className = '' }) {
   // Цвет ставится по темпу, а не по месячному плану целиком: иначе середина
   // месяца всегда красная. Сам план в подписи остаётся месячным — подменять
   // его нельзя, человек должен видеть ту цифру, на которую подписался.
@@ -39,7 +39,7 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
   const status = planStatus(fact, target, inverse)
   const partial = target != null && plan != null && Math.round(target) !== Math.round(plan)
   return (
-    <div className={`rop-metric ${big ? 'big' : ''} ${status}`}>
+    <div className={`rop-metric ${big ? 'big' : ''} ${status} ${className}`}>
       <div className="rop-metric-label">{label}</div>
       <div className="rop-metric-value">
         {fact == null ? '—' : unit === '₽' ? moneyFormat(fact) : formatNum(fact)}
@@ -302,18 +302,8 @@ export default function RopDashboardPage({ team = null, refreshKey = 0 }) {
         <h2 className="portal-section-title">Заключённые договоры</h2>
       </div>
 
-      <div className="rop-metrics rop-money-summary">
-        <Metric label="Сумма заключённых договоров" fact={data ? money.amount : null}
-                plan={moneyPlan} unit="₽" big moneyFormat={formatContractMoney}
-                sub="Полная стоимость договоров по дате входа в «Полная/частичная оплата»">
-          <div className="rop-metric-sub">План за выбранный период — сумма заданных планов менеджеров.</div>
-          {money.missing > 0 && (
-            <div className="rop-metric-sub">Без суммы в Битриксе: {money.missing}. Итог неполный.</div>
-          )}
-        </Metric>
-      </div>
-
-      <div className="rop-metrics">
+      <div className="rop-kpi-section">
+      <div className="rop-kpi-grid">
         {/* БФЛ опознаётся по депозиту АУ среди позиций сделки, а не по
             названию услуги: реструктуризация — тоже банкротство, и депозит
             у неё тоже есть. АЗ и ВКИ продаются поверх договора, поэтому
@@ -339,15 +329,11 @@ export default function RopDashboardPage({ team = null, refreshKey = 0 }) {
         {/* ФПА продаётся до банкротства и в чек намеренно не входит — это
             проверка, подходит ли клиент. Здесь он идёт штуками: сколько
             проверок продали, то есть каков вход в воронку. */}
-        <Metric label="ФПА" fact={total.окс_фпа} unit="шт" bounds={bounds}>
+        <Metric className="rop-metric-fpa" label="ФПА" fact={total.окс_фпа} unit="шт" bounds={bounds}>
           <Split rows={rows} pick={t => t.окс_фпа} />
         </Metric>
-      </div>
 
-      {/* Темп и квота стоят отдельной строкой: это не факты, а выводы из
-          фактов. В одном ряду с проданными продуктами они читались как
-          шестой и седьмой продукт. */}
-      <div className="rop-metrics rop-metrics-calc">
+        {/* Второй ряд использует те же колонки, что и продукты. */}
         {/* Темп сравнивается с месячным планом целиком, без доли дней: он и
             отвечает на вопрос «а к концу месяца хватит?». Развёртки у него
             нет намеренно — это не факт, а продолжение линии, и делить
@@ -370,6 +356,15 @@ export default function RopDashboardPage({ team = null, refreshKey = 0 }) {
               : `осталось ${formatNum(квота.осталось)} за ${formatNum(квота.дней)} ${plural(квота.дней, 'день', 'дня', 'дней')}`
           }
         />
+        <Metric label="Сумма заключённых договоров" fact={data ? money.amount : null}
+                plan={moneyPlan} unit="₽" big className="rop-metric-money" moneyFormat={formatContractMoney}
+                sub="Полная стоимость договоров по дате входа в «Полная/частичная оплата»">
+          <div className="rop-metric-sub">План за выбранный период — сумма заданных планов менеджеров.</div>
+          {money.missing > 0 && (
+            <div className="rop-metric-sub">Без суммы в Битриксе: {money.missing}. Итог неполный.</div>
+          )}
+        </Metric>
+      </div>
       </div>
 
       {/* ОБЩЕЕ ЧИСЛО ДОГОВОРОВ НУЖНО ДЛЯ СВЕРКИ с Битриксом: без него
