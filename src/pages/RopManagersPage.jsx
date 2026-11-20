@@ -4,6 +4,7 @@ import {
   loadRopData, periodBounds, recentMonths, planFor, planStatus, paceTarget,
   runRate, quotaPerDay, byTeam,
 } from '../lib/rop.js'
+import { contractAmountTotal, moneyPlanFor, MONEY_METRIC, formatContractMoney } from '../lib/ropMoney.js'
 import { formatNum, plural } from '../lib/helpers.js'
 
 // ============================================================================
@@ -51,7 +52,7 @@ function Quota({ q }) {
   return <span>{formatNum(q.квота)}</span>
 }
 
-export default function RopManagersPage({ team = null }) {
+export default function RopManagersPage({ team = null, refreshKey = 0 }) {
   const [mode, setMode] = useState('month')
   const [anchor, setAnchor] = useState(todayISO())
   const [from, setFrom] = useState(todayISO())
@@ -71,9 +72,10 @@ export default function RopManagersPage({ team = null }) {
       .catch(e => { if (!cancelled) setError(String(e?.message || e)) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [bounds.from, bounds.to])
+  }, [bounds.from, bounds.to, refreshKey])
 
   const plans = data?.plans || []
+  const amountRows = byTeam(data?.contractAmounts || [], team)
 
   const { люди, отдел } = useMemo(() => {
     const by = new Map()
@@ -85,18 +87,35 @@ export default function RopManagersPage({ team = null }) {
       add(by.get(r.менеджер).t, r)
       add(сумма, r)
     }
-    // Человек без единого договора за период в таблице не нужен: строка из
-    // прочерков ничего не говорит, а место занимает. Ушедшие показываются,
-    // если результаты за период у них были, — их договоры принадлежат отделу.
+    // Денежный факт и планы включают также менеджеров без продаж БФЛ.
+    for (const r of byTeam(data?.contractAmounts || [], team)) {
+      if (!by.has(r.менеджер)) by.set(r.менеджер, {
+        менеджер: r.менеджер, работает: r.работает !== false, t: blank(),
+      })
+    }
+    const active = new Set(byTeam(data?.managers || [], team).map(m => m.manager_name))
+    for (const p of byTeam(data?.plans || [], team)) {
+      if (p.metric !== MONEY_METRIC || !p.manager_name ||
+          String(p.period).slice(0, 7) < bounds.from.slice(0, 7) ||
+          String(p.period).slice(0, 7) > bounds.to.slice(0, 7)) continue
+      if (!by.has(p.manager_name)) by.set(p.manager_name, {
+        менеджер: p.manager_name, работает: active.has(p.manager_name), t: blank(),
+      })
+    }
     const list = [...by.values()]
-      .filter(m => KEYS.some(k => m.t[k]))
+      .filter(m => KEYS.some(k => m.t[k]) ||
+        contractAmountTotal(byTeam(data?.contractAmounts || [], team), m.менеджер).contracts > 0 ||
+        moneyPlanFor(data?.plans || [], bounds.from, bounds.to, m.менеджер, team) != null)
       .sort((a, b) => b.t.окс_бфл - a.t.окс_бфл || a.менеджер.localeCompare(b.менеджер))
     return { люди: list, отдел: сумма }
-  }, [data, team])
+  }, [data, team, bounds.from, bounds.to])
 
+  const money = contractAmountTotal(amountRows)
+  const moneyPlan = moneyPlanFor(plans, bounds.from, bounds.to, null, team)
   const планОтдела = planFor(plans, bounds.from, 'оксвсего', null, team)
   const label = bounds.from.split('-').reverse().join('.') + ' — ' + bounds.to.split('-').reverse().join('.')
 
+  if (error) return <div className="alert alert-danger" role="alert">Не удалось загрузить показатели: {error}</div>
   if (loading && !data) return <div className="loading">Загрузка...</div>
 
   return (
@@ -133,9 +152,9 @@ export default function RopManagersPage({ team = null }) {
       <div className="portal-section-head">
         <h2 className="portal-section-title">Менеджеры</h2>
         <p className="portal-section-note">
-          План стоит только на договорах БФЛ — АЗ и ВКИ идут счётом, без
-          оценки. Квота считается по каждому отдельно: это и есть то, что
-          человеку говорят на планёрке.
+          План ставится по количеству БФЛ и по сумме всех договоров.
+          Денежный факт — полная стоимость по дате входа в «Полная/частичная оплата». План на неделю
+          или период рассчитывается по календарным дням каждого месяца.
         </p>
       </div>
 
@@ -152,6 +171,9 @@ export default function RopManagersPage({ team = null }) {
               <thead>
                 <tr>
                   <th style={{ minWidth: 180 }}>Менеджер</th>
+                  <th className="portal-num">Сумма договоров</th>
+                  <th className="portal-num">План, ₽</th>
+                  <th className="portal-num">Выполнение</th>
                   <th className="portal-num">Договоры БФЛ</th>
                   <th className="portal-num">АЗ</th>
                   <th className="portal-num">ВКИ</th>
@@ -161,6 +183,8 @@ export default function RopManagersPage({ team = null }) {
               </thead>
               <tbody>
                 {люди.map(m => {
+                  const managerMoney = contractAmountTotal(amountRows, m.менеджер)
+                  const managerMoneyPlan = moneyPlanFor(plans, bounds.from, bounds.to, m.менеджер, team)
                   const план = planFor(plans, bounds.from, 'оксвсего', m.менеджер, team)
                   const rr = runRate(m.t.окс_бфл, bounds.from, bounds.to)
                   const q = quotaPerDay(план, m.t.окс_бфл, bounds.to)
@@ -169,6 +193,14 @@ export default function RopManagersPage({ team = null }) {
                       <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
                         {m.менеджер}
                         {!m.работает && <span className="rop-left"> уволен</span>}
+                      </td>
+                      <td className="portal-num">
+                        {formatContractMoney(managerMoney.amount)}
+                        {managerMoney.missing > 0 && <div className="td-muted">Без суммы: {managerMoney.missing}</div>}
+                      </td>
+                      <td className="portal-num">{formatContractMoney(managerMoneyPlan)}</td>
+                      <td className="portal-num">
+                        {managerMoneyPlan > 0 ? `${Math.round(100 * managerMoney.amount / managerMoneyPlan)}%` : '—'}
                       </td>
                       <td className="portal-num">
                         {formatNum(m.t.окс_бфл)}
@@ -187,6 +219,9 @@ export default function RopManagersPage({ team = null }) {
                 })}
                 <tr className="rop-row-total">
                   <td style={{ fontWeight: 700 }}>Отдел целиком</td>
+                  <td className="portal-num">{formatContractMoney(money.amount)}</td>
+                  <td className="portal-num">{formatContractMoney(moneyPlan)}</td>
+                  <td className="portal-num">{moneyPlan > 0 ? `${Math.round(100 * money.amount / moneyPlan)}%` : '—'}</td>
                   <td className="portal-num">
                     {formatNum(отдел.окс_бфл)}
                     {планОтдела != null && (
@@ -211,8 +246,9 @@ export default function RopManagersPage({ team = null }) {
       )}
 
       <div className="rop-footer">
-        Договор считается банкротным по депозиту арбитражного управляющего
-        среди позиций, а не по названию услуги. АЗ и ВКИ продаются поверх
+        Денежный факт включает все договоры выбранного отдела без копий.
+        Денежный план — сумма заданных планов менеджеров за выбранный период.
+        БФЛ определяется по названию договора. АЗ и ВКИ продаются поверх
         договора, поэтому одна сделка может попасть и в БФЛ, и в АЗ —
         колонки намеренно не складываются в одну сумму. Runrate — сколько
         выйдет к концу периода, если дальше пойдёт как сейчас; для

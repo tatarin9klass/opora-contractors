@@ -4,6 +4,7 @@ import {
   loadRopData, periodBounds, recentMonths, sumRows, planFor, runRate, planStatus,
   paceTarget, formatMoneyShort, GROUPS, byTeam, dailySeries, quotaPerDay,
 } from '../lib/rop.js'
+import { contractAmountTotal, moneyPlanFor, formatContractMoney } from '../lib/ropMoney.js'
 import { formatNum, plural } from '../lib/helpers.js'
 
 // ============================================================================
@@ -30,7 +31,7 @@ const MODES = [
   { id: 'range', label: 'Период' },
 ]
 
-function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub, big, children }) {
+function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub, big, children, moneyFormat = formatMoneyShort }) {
   // Цвет ставится по темпу, а не по месячному плану целиком: иначе середина
   // месяца всегда красная. Сам план в подписи остаётся месячным — подменять
   // его нельзя, человек должен видеть ту цифру, на которую подписался.
@@ -41,12 +42,12 @@ function Metric({ label, fact, plan, unit, inverse, additive = true, bounds, sub
     <div className={`rop-metric ${big ? 'big' : ''} ${status}`}>
       <div className="rop-metric-label">{label}</div>
       <div className="rop-metric-value">
-        {fact == null ? '—' : unit === '₽' ? formatMoneyShort(fact) : formatNum(fact)}
+        {fact == null ? '—' : unit === '₽' ? moneyFormat(fact) : formatNum(fact)}
         {unit === '%' && fact != null ? '%' : ''}
       </div>
       {plan != null && (
         <div className="rop-metric-plan">
-          план {unit === '₽' ? formatMoneyShort(plan) : formatNum(plan)}
+          план {unit === '₽' ? moneyFormat(plan) : formatNum(plan)}
           {fact != null && plan > 0 && (
             <span className="rop-metric-pct"> · {Math.round((100 * fact) / plan)}%</span>
           )}
@@ -213,7 +214,7 @@ function DailyPlan({ дни, норма }) {
   )
 }
 
-export default function RopDashboardPage({ team = null }) {
+export default function RopDashboardPage({ team = null, refreshKey = 0 }) {
   const [mode, setMode] = useState('month')
   const [anchor, setAnchor] = useState(todayISO())
   const [from, setFrom] = useState(todayISO())
@@ -238,11 +239,13 @@ export default function RopDashboardPage({ team = null }) {
       .finally(() => { if (!cancelled) setLoading(false) })
 
     return () => { cancelled = true }
-  }, [bounds.from, bounds.to, mode])
+  }, [bounds.from, bounds.to, mode, refreshKey])
 
   const rows = byTeam(data?.daily || [], team)
   const plans = data?.plans || []
   const total = useMemo(() => sumRows(rows), [rows])
+  const money = contractAmountTotal(byTeam(data?.contractAmounts || [], team))
+  const moneyPlan = moneyPlanFor(plans, bounds.from, bounds.to, null, team)
   // Договоры, не попавшие ни в одну плитку: не банкротство и без известной
   // услуги в позициях. Здесь проявится новый продукт вроде возврата
   // страховок — иначе он тихо сидел бы в итоге и выглядел расхождением.
@@ -257,6 +260,7 @@ export default function RopDashboardPage({ team = null }) {
   const квота = quotaPerDay(план, total.окс_бфл, bounds.to)
   const ряд = dailySeries(rows, bounds.from, bounds.to, план)
 
+  if (error) return <div className="alert alert-danger" role="alert">Не удалось загрузить показатели: {error}</div>
   if (loading && !data) return <div className="loading">Загрузка...</div>
 
   return (
@@ -296,6 +300,17 @@ export default function RopDashboardPage({ team = null }) {
       {/* ---- Договоры ---- */}
       <div className="portal-section-head">
         <h2 className="portal-section-title">Заключённые договоры</h2>
+      </div>
+
+      <div className="rop-metrics rop-money-summary">
+        <Metric label="Сумма заключённых договоров" fact={data ? money.amount : null}
+                plan={moneyPlan} unit="₽" big moneyFormat={formatContractMoney}
+                sub="Полная стоимость договоров по дате входа в «Полная/частичная оплата»">
+          <div className="rop-metric-sub">План за выбранный период — сумма заданных планов менеджеров.</div>
+          {money.missing > 0 && (
+            <div className="rop-metric-sub">Без суммы в Битриксе: {money.missing}. Итог неполный.</div>
+          )}
+        </Metric>
       </div>
 
       <div className="rop-metrics">

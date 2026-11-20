@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { todayISO } from '../lib/dateContext.js'
 import { recentMonths, PLAN_METRICS } from '../lib/rop.js'
+import { parsePlanValue, formatContractMoney } from '../lib/ropMoney.js'
 import { formatNum, plural } from '../lib/helpers.js'
 
 // ============================================================================
@@ -17,8 +18,7 @@ import { formatNum, plural } from '../lib/helpers.js'
 // одно число, в таблице менеджеров складывалось другое, и какое настоящее,
 // было непонятно. Теперь настоящее одно: то, что разложено на людей.
 //
-// ПЛАН СТАВИТСЯ ТОЛЬКО ПО ДОГОВОРАМ БФЛ. План, разложенный на шесть метрик,
-// перестаёт быть обязательством и становится анкетой.
+// Планы по количеству БФЛ и полной сумме всех договоров задаются на месяц.
 //
 // ПУСТАЯ КЛЕТКА — ЭТО ОТСУТСТВИЕ ПЛАНА, А НЕ НОЛЬ. На первом экране по
 // такому месяцу не будет ни плана, ни квоты, ни оценки. Ноль означал бы, что
@@ -33,10 +33,7 @@ function cellKey(manager, metric) {
 // а пользователь по дороге набирает «1», «12», «12 » — приводить к числу
 // можно только на сохранении.
 function toValue(raw) {
-  const s = String(raw ?? '').replace(/\s/g, '').replace(',', '.')
-  if (s === '') return null
-  const n = Number(s)
-  return Number.isFinite(n) ? n : null
+  try { return parsePlanValue(raw) } catch { return null }
 }
 
 export default function RopPlansPage({ team = null }) {
@@ -68,14 +65,17 @@ export default function RopPlansPage({ team = null }) {
       // Состав и планы — строго одного отдела. Без фильтра по отделу в
       // таблицу попали бы чужие менеджеры.
       const [{ data: mg, error: e1 }, { data: pl, error: e2 }] = await Promise.all([
-        supabase.from('rop_managers').select('manager_name, sort_order')
-          .eq('active', true).eq('team', team).order('sort_order'),
+        supabase.from('rop_managers').select('manager_name, sort_order, active')
+          .eq('team', team).order('sort_order'),
         supabase.from('rop_plans').select('id, period, manager_name, metric, value')
           .eq('period', p).eq('team', team),
       ])
       if (e1) throw e1
       if (e2) throw e2
-      setManagers(mg || [])
+      // Сохраняем в форме ушедших с планом на этот месяц, иначе общий план
+      // на главной отличался бы от видимой суммы редактируемых строк.
+      const planned = new Set((pl || []).filter(p => PLAN_METRICS.some(m => m.id === p.metric)).map(p => p.manager_name))
+      setManagers((mg || []).filter(m => m.active || planned.has(m.manager_name)))
       const map = {}
       const f = {}
       for (const row of pl || []) {
@@ -97,6 +97,15 @@ export default function RopPlansPage({ team = null }) {
 
   useEffect(() => { load(period) }, [period, team])
 
+  const invalid = useMemo(() => {
+    const out = new Set()
+    for (const m of managers) for (const metric of PLAN_METRICS) {
+      const key = cellKey(m.manager_name, metric.id)
+      try { parsePlanValue(form[key]) } catch { out.add(key) }
+    }
+    return out
+  }, [managers, form])
+
   // Что изменилось. Считается на каждый рендер и стоит копейки: клеток
   // меньше десятка.
   const changes = useMemo(() => {
@@ -104,6 +113,7 @@ export default function RopPlansPage({ team = null }) {
     for (const m of managers) {
       for (const met of PLAN_METRICS) {
         const k = cellKey(m.manager_name, met.id)
+        if (invalid.has(k)) continue
         const was = saved[k]
         const now = toValue(form[k])
         if (was && now == null) out.push({ op: 'delete', id: was.id, k })
@@ -114,10 +124,10 @@ export default function RopPlansPage({ team = null }) {
       }
     }
     return out
-  }, [managers, saved, form])
+  }, [managers, saved, form, invalid])
 
   async function save() {
-    if (!changes.length) return
+    if (!changes.length || invalid.size) return
     setSaving(true); setError(''); setNote('')
     try {
       const ins = changes.filter(c => c.op === 'insert')
@@ -166,7 +176,7 @@ export default function RopPlansPage({ team = null }) {
       <div className="portal-section-head">
         <h2 className="portal-section-title">Планы на месяц</h2>
         <p className="portal-section-note">
-          План ставится по договорам БФЛ и только на людей. План отдела
+          Задайте месячные планы по количеству БФЛ и сумме всех договоров в рублях. План отдела
           отдельно не задаётся — он складывается из того, что вы разложили, и
           показан последней строкой. Пустая клетка означает, что плана нет: по
           такому месяцу не будет ни плана, ни квоты, ни оценки.
@@ -182,12 +192,13 @@ export default function RopPlansPage({ team = null }) {
         </div>
         <div className="portal-period-detail">
           {note && <span className="rop-saved">{note}</span>}
-          <button className="btn btn-primary btn-sm" disabled={!changes.length || saving} onClick={save}>
+          <button className="btn btn-primary btn-sm" disabled={!changes.length || saving || invalid.size > 0 || loading} onClick={save}>
             {saving ? 'Сохраняю...' : changes.length ? `Сохранить (${changes.length})` : 'Нет изменений'}
           </button>
         </div>
       </div>
 
+      {invalid.size > 0 && <div className="alert alert-danger" role="alert">План должен быть неотрицательным числом, не более двух знаков после запятой. Для удаления плана очистите поле.</div>}
       {error && <div className="alert alert-danger" style={{ marginBottom: 16 }}>{error}</div>}
 
       {loading ? <div className="loading">Загрузка...</div> : (
@@ -205,7 +216,7 @@ export default function RopPlansPage({ team = null }) {
               <tbody>
                 {managers.map(r => (
                   <tr key={r.manager_name}>
-                    <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>{r.manager_name}</td>
+                    <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>{r.manager_name}{!r.active && <span className="rop-left"> уволен</span>}</td>
                     {PLAN_METRICS.map(m => {
                       const k = cellKey(r.manager_name, m.id)
                       const dirty = changes.some(c => c.k === k)
@@ -214,6 +225,9 @@ export default function RopPlansPage({ team = null }) {
                           <input
                             className={`form-input rop-plan-input ${dirty ? 'dirty' : ''}`}
                             inputMode="decimal"
+                            aria-label={`${r.manager_name}: ${m.label}`}
+                            aria-invalid={invalid.has(k)}
+                            disabled={saving}
                             value={form[k] ?? ''}
                             placeholder="—"
                             onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))}
@@ -229,7 +243,7 @@ export default function RopPlansPage({ team = null }) {
                     const s = сумма(m.id)
                     return (
                       <td key={m.id} className="portal-num" style={{ fontWeight: 700 }}>
-                        {s == null ? <span className="td-muted">—</span> : formatNum(s)}
+                        {s == null ? <span className="td-muted">—</span> : m.unit === '₽' ? formatContractMoney(s) : formatNum(s)}
                       </td>
                     )
                   })}
@@ -255,7 +269,7 @@ export default function RopPlansPage({ team = null }) {
         сохранения{(() => { const s = сумма('оксвсего'); return s == null ? '' : ` — сейчас ${formatNum(s)} ${plural(s, 'договор', 'договора', 'договоров')}` })()}.
         Состав отдела берётся из таблицы rop_managers: ушёл человек — снимите
         отметку «активен», и его прошлые результаты останутся в истории, а в
-        планах он больше не появится.
+        планах он останется только за месяцы, где ему уже задан план.
       </div>
     </div>
   )
