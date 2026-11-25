@@ -255,8 +255,10 @@ export default function RopDashboardPage({ team = null, refreshKey = 0 }) {
   // «Период закрыт» определяется датой, а не сравнением темпа с фактом.
   // При нуле договоров темп тоже ноль, они совпадали, и открытый ноябрь
   // подписывался закрытым.
-  const закрыт = bounds.to < todayISO()
-  const rr = runRate(total.окс_бфл, bounds.from, bounds.to)
+  const today = todayISO()
+  const закрыт = bounds.to < today
+  const rr = runRate(total.окс_бфл, bounds.from, bounds.to, today)
+  const moneyRunRate = data ? runRate(money.amount, bounds.from, bounds.to, today) : null
   const квота = quotaPerDay(план, total.окс_бфл, bounds.to)
   const ряд = dailySeries(rows, bounds.from, bounds.to, план)
 
@@ -356,14 +358,22 @@ export default function RopDashboardPage({ team = null, refreshKey = 0 }) {
               : `осталось ${formatNum(квота.осталось)} за ${formatNum(квота.дней)} ${plural(квота.дней, 'день', 'дня', 'дней')}`
           }
         />
-        <Metric label="Сумма заключённых договоров" fact={data ? money.amount : null}
-                plan={moneyPlan} unit="₽" big className="rop-metric-money" moneyFormat={formatContractMoney}
-                sub="Полная стоимость договоров по дате входа в «Полная/частичная оплата»">
-          <div className="rop-metric-sub">План за выбранный период — сумма заданных планов менеджеров.</div>
-          {money.missing > 0 && (
-            <div className="rop-metric-sub">Без суммы в Битриксе: {money.missing}. Итог неполный.</div>
-          )}
-        </Metric>
+        <div className="rop-money-pair">
+          <Metric
+            label="Сумма заключённых договоров" fact={data ? money.amount : null}
+            plan={moneyPlan} unit="₽" big moneyFormat={formatContractMoney}
+            sub="Полная стоимость договоров по дате входа в стадию оплаты"
+          >
+            {money.missing > 0 && (
+              <div className="rop-metric-sub">Без суммы в Битриксе: {money.missing}. Итог неполный.</div>
+            )}
+          </Metric>
+          <Metric
+            label="Runrate по сумме" fact={moneyRunRate}
+            plan={moneyPlan} unit="₽" big moneyFormat={formatContractMoney}
+            sub={закрыт ? 'Факт за закрытый период' : 'Прогноз к концу периода при текущем темпе'}
+          />
+        </div>
       </div>
       </div>
 
